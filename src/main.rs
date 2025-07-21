@@ -5,8 +5,11 @@ use actix_files::Files;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::sync::Mutex;
 use tokio;
+use tracing::{info, instrument, warn};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct RequestData {
@@ -31,6 +34,7 @@ struct CreateBucketPayload {
     password: String,
 }
 
+#[instrument(skip(app_state, payload), fields(bucket_name = %path.as_str()))]
 async fn create_bucket(
     path: web::Path<String>,
     payload: web::Json<CreateBucketPayload>,
@@ -40,12 +44,14 @@ async fn create_bucket(
     let password = payload.into_inner().password;
 
     if password.is_empty() {
+        warn!("Attempted to create bucket with empty password");
         return HttpResponse::BadRequest().body("Password cannot be empty");
     }
 
     let mut buckets = app_state.buckets.lock().unwrap();
 
     if buckets.contains_key(&bucket_name) {
+        warn!("Attempted to create a bucket that already exists");
         return HttpResponse::Conflict().body("Bucket already exists");
     }
 
@@ -53,11 +59,13 @@ async fn create_bucket(
         password,
         requests: Vec::new(),
     };
-    buckets.insert(bucket_name, new_bucket);
+    buckets.insert(bucket_name.clone(), new_bucket);
 
+    info!("Successfully created new bucket");
     HttpResponse::Ok().body("Bucket created")
 }
 
+#[instrument(skip(req, body, app_state), fields(path = %req.path()))]
 async fn capture_request(
     req: HttpRequest,
     body: web::Bytes,
@@ -66,8 +74,12 @@ async fn capture_request(
     let path = req.path();
     let bucket_name = match path.trim_start_matches('/').split('/').next() {
         Some(name) if !name.is_empty() => name.to_string(),
-        _ => return HttpResponse::BadRequest().body("Invalid bucket path."),
+        _ => {
+            warn!("Request with invalid bucket path");
+            return HttpResponse::BadRequest().body("Invalid bucket path.");
+        }
     };
+    tracing::Span::current().record("bucket_name", &bucket_name.as_str());
 
     let mut buckets = app_state.buckets.lock().unwrap();
 
@@ -82,50 +94,72 @@ async fn capture_request(
 
         let request_data = RequestData {
             path: path.to_string(),
-            method,
+            method: method.clone(),
             headers,
             body,
         };
+
+        info!(method = %method, "Captured request");
         bucket.requests.push(request_data);
         HttpResponse::Ok().body("Request captured")
     } else {
+        warn!("Request for non-existent bucket");
         HttpResponse::NotFound().body("Bucket not found")
     }
 }
 
+#[instrument(skip(req, app_state), fields(bucket_name = req.match_info().get("bucket_name").unwrap_or("unknown")))]
 async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -> impl Responder {
     let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
     let password = match req.headers().get("X-Bucket-Password") {
         Some(p) => p.to_str().unwrap_or(""),
-        None => return HttpResponse::Unauthorized().body("Password required"),
+        None => {
+            warn!("Password header missing");
+            return HttpResponse::Unauthorized().body("Password required");
+        }
     };
 
     let buckets = app_state.buckets.lock().unwrap();
 
     if let Some(bucket) = buckets.get(bucket_name) {
         if bucket.password == password {
+            info!("Served requests for bucket");
             HttpResponse::Ok().json(&bucket.requests)
         } else {
+            warn!("Invalid password provided for bucket");
             HttpResponse::Unauthorized().body("Invalid password")
         }
     } else {
+        warn!("Request for non-existent bucket");
         HttpResponse::NotFound().body("Bucket not found")
     }
 }
 
+#[instrument(skip(app_state))]
 async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
     let buckets = app_state.buckets.lock().unwrap();
     let names: Vec<String> = buckets.keys().cloned().collect();
+    info!(count = names.len(), "Served list of buckets");
     HttpResponse::Ok().json(names)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize tracing subscriber for structured logging
+    // Log level can be set with the RUST_LOG environment variable (e.g., RUST_LOG=info,request_catcher=debug)
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+
     let app_state = web::Data::new(AppState {
         buckets: Mutex::new(HashMap::new()),
     });
 
-    println!("Server running at http://127.0.0.1:9090. Press Ctrl+C to shut down.");
+    // Get host and port from environment variables, with defaults for development
+    let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = env::var("PORT").unwrap_or_else(|_| "9090".to_string());
+    let address = format!("{}:{}", host, port);
+
+    info!("Server starting on http://{}", address);
 
     let server = HttpServer::new(move || {
         let cors = Cors::default()
@@ -158,7 +192,7 @@ async fn main() -> std::io::Result<()> {
             )
             .route("/{path:.*}", web::route().to(capture_request))
     })
-    .bind("127.0.0.1:9090")?
+    .bind(&address)?
     .run();
 
     let server_handle = server.handle();
@@ -167,7 +201,7 @@ async fn main() -> std::io::Result<()> {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to listen for ctrl-c");
-        println!("\nCtrl-C received, shutting down gracefully.");
+        info!("Ctrl-C received, shutting down gracefully.");
         server_handle.stop(true).await;
     });
 
