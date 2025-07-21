@@ -17,4 +17,5 @@ RUN cargo build --release --bin request_catcher
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 COPY --from=builder /app/target/release/request_catcher /usr/local/bin
+COPY static /app/static
 ENTRYPOINT ["/usr/local/bin/request_catcher"]
