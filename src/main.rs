@@ -113,6 +113,12 @@ async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -
     }
 }
 
+async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
+    let buckets = app_state.buckets.lock().unwrap();
+    let names: Vec<String> = buckets.keys().cloned().collect();
+    HttpResponse::Ok().json(names)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let app_state = web::Data::new(AppState {
@@ -132,6 +138,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_state.clone())
             .service(
                 web::scope("/api")
+                    .route("/buckets", web::get().to(list_buckets))
                     .route("/create/{bucket_name}", web::post().to(create_bucket))
                     .route(
                         "/requests/{bucket_name}",

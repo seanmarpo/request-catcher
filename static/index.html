@@ -16,187 +16,138 @@
         </style>
     </head>
     <body class="bg-gray-100 text-gray-800">
-        <div class="container mx-auto p-4">
-            <h1 class="text-3xl font-bold mb-4">Web Request Catcher</h1>
+        <div class="container mx-auto p-4 max-w-xl">
+            <h1 class="text-3xl font-bold mb-4 text-center">
+                Web Request Catcher
+            </h1>
+            <p class="text-center text-gray-600 mb-6">
+                Create a new bucket or select an existing one below.
+            </p>
 
+            <!-- Create Bucket Section -->
             <div class="bg-white p-6 rounded-lg shadow-md mb-6">
-                <h2 class="text-xl font-semibold mb-2">Create a New Bucket</h2>
-                <div
-                    class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2"
-                >
+                <h2 class="text-xl font-semibold mb-4">Create a New Bucket</h2>
+                <div class="space-y-4">
                     <input
                         type="text"
                         id="bucketName"
-                        placeholder="Enter bucket name"
-                        class="flex-grow p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Enter new bucket name"
+                        class="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <input
                         type="password"
                         id="bucketPassword"
-                        placeholder="Set a password for the bucket"
-                        class="flex-grow p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Enter a password for the new bucket"
+                        class="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button
                         id="createBucketBtn"
-                        class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
+                        class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
                     >
-                        Create
+                        Create and View Bucket
                     </button>
                 </div>
-                <p class="text-sm text-gray-500 mt-2">
-                    Your bucket will be available at:
-                    <code class="bg-gray-200 p-1 rounded"
-                        >/&lt;bucket_name&gt;/...</code
-                    >
-                </p>
             </div>
 
+            <!-- Existing Buckets Section -->
             <div class="bg-white p-6 rounded-lg shadow-md">
-                <h2 class="text-xl font-semibold mb-2">Captured Requests</h2>
-                <div
-                    class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mb-4"
-                >
-                    <input
-                        type="text"
-                        id="viewBucketName"
-                        placeholder="Enter bucket name to view"
-                        class="flex-grow p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <input
-                        type="password"
-                        id="viewBucketPassword"
-                        placeholder="Enter bucket password"
-                        class="flex-grow p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                        id="viewRequestsBtn"
-                        class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600"
-                    >
-                        View Requests
-                    </button>
-                </div>
-                <div id="requestsContainer" class="space-y-4">
-                    <!-- Requests will be displayed here -->
+                <h2 class="text-xl font-semibold mb-4">Existing Buckets</h2>
+                <div id="bucketsList" class="space-y-2">
+                    <p class="text-gray-500">Loading buckets...</p>
                 </div>
             </div>
         </div>
 
         <script>
-            const createBucketBtn = document.getElementById("createBucketBtn");
-            const viewRequestsBtn = document.getElementById("viewRequestsBtn");
-            const bucketNameInput = document.getElementById("bucketName");
-            const bucketPasswordInput =
-                document.getElementById("bucketPassword");
-            const viewBucketNameInput =
-                document.getElementById("viewBucketName");
-            const viewBucketPasswordInput =
-                document.getElementById("viewBucketPassword");
-            const requestsContainer =
-                document.getElementById("requestsContainer");
+            document.addEventListener("DOMContentLoaded", () => {
+                const createBucketBtn =
+                    document.getElementById("createBucketBtn");
+                const bucketNameInput = document.getElementById("bucketName");
+                const bucketPasswordInput =
+                    document.getElementById("bucketPassword");
+                const bucketsList = document.getElementById("bucketsList");
 
-            createBucketBtn.addEventListener("click", async () => {
-                const bucketName = bucketNameInput.value.trim();
-                const password = bucketPasswordInput.value;
-                if (!bucketName || !password) {
-                    alert("Please enter a bucket name and a password.");
-                    return;
-                }
+                // --- Create Bucket Logic ---
+                createBucketBtn.addEventListener("click", async () => {
+                    const bucketName = bucketNameInput.value.trim();
+                    const password = bucketPasswordInput.value.trim();
 
-                try {
-                    const response = await fetch(`/api/create/${bucketName}`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({ password }),
-                    });
-
-                    if (response.ok) {
-                        alert(`Bucket "${bucketName}" created successfully!`);
-                        bucketNameInput.value = "";
-                        bucketPasswordInput.value = "";
-                        viewBucketNameInput.value = bucketName;
-                        viewBucketPasswordInput.value = password;
-                        requestsContainer.innerHTML = `<p>Bucket created. Send requests to /${bucketName} and click "View Requests".</p>`;
-                    } else {
-                        const errorText = await response.text();
-                        alert(`Error creating bucket: ${errorText}`);
+                    if (!bucketName || !password) {
+                        alert(
+                            "Please enter both a bucket name and a password.",
+                        );
+                        return;
                     }
-                } catch (error) {
-                    console.error("Error:", error);
-                    alert("An error occurred while creating the bucket.");
-                }
-            });
 
-            viewRequestsBtn.addEventListener("click", async () => {
-                const bucketName = viewBucketNameInput.value.trim();
-                const password = viewBucketPasswordInput.value;
-                if (!bucketName || !password) {
-                    alert("Please enter a bucket name and password to view.");
-                    return;
-                }
-                fetchAndDisplayRequests(bucketName, password);
-            });
-
-            async function fetchAndDisplayRequests(bucketName, password) {
-                try {
-                    const response = await fetch(
-                        `/api/requests/${bucketName}`,
-                        {
-                            headers: {
-                                "X-Bucket-Password": password,
+                    try {
+                        const response = await fetch(
+                            `/api/create/${bucketName}`,
+                            {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ password }),
                             },
-                        },
-                    );
+                        );
 
-                    requestsContainer.innerHTML = ""; // Clear previous requests
-
-                    if (response.ok) {
-                        const requests = await response.json();
-                        if (requests.length === 0) {
-                            requestsContainer.innerHTML =
-                                "<p>No requests captured yet.</p>";
+                        if (response.ok) {
+                            window.location.href = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
                         } else {
-                            requests.reverse().forEach((req) => {
-                                const reqElement =
-                                    document.createElement("div");
-                                reqElement.className =
-                                    "p-4 border rounded-md bg-gray-50";
-
-                                let headersHtml =
-                                    '<ul class="list-disc list-inside">';
-                                for (const [key, value] of Object.entries(
-                                    req.headers,
-                                )) {
-                                    headersHtml += `<li><strong>${key}:</strong> ${value}</li>`;
-                                }
-                                headersHtml += "</ul>";
-
-                                reqElement.innerHTML = `
-                                <h3 class="font-semibold">${req.method} Request</h3>
-                                <p class="text-sm text-gray-600">Path: <code class="bg-gray-200 p-1 rounded">${req.path}</code></p>
-                                <div class="mt-2">
-                                    <h4 class="font-medium">Headers:</h4>
-                                    ${headersHtml}
-                                </div>
-                                <div class="mt-2">
-                                    <h4 class="font-medium">Body:</h4>
-                                    <pre class="bg-gray-200 p-2 rounded-md whitespace-pre-wrap">${req.body || "No body"}</pre>
-                                </div>
-                            `;
-                                requestsContainer.appendChild(reqElement);
-                            });
+                            const errorText = await response.text();
+                            alert(`Error creating bucket: ${errorText}`);
                         }
-                    } else {
-                        const errorText = await response.text();
-                        requestsContainer.innerHTML = `<p class="text-red-500">Error: ${errorText} (Status: ${response.status})</p>`;
+                    } catch (error) {
+                        console.error("Error:", error);
+                        alert("An error occurred while creating the bucket.");
                     }
-                } catch (error) {
-                    console.error("Error:", error);
-                    requestsContainer.innerHTML =
-                        '<p class="text-red-500">An error occurred while fetching requests.</p>';
+                });
+
+                // --- List Existing Buckets Logic ---
+                async function fetchAndRenderBuckets() {
+                    try {
+                        const response = await fetch("/api/buckets");
+                        if (!response.ok) {
+                            throw new Error("Failed to fetch bucket list.");
+                        }
+                        const bucketNames = await response.json();
+
+                        bucketsList.innerHTML = ""; // Clear loading message
+
+                        if (bucketNames.length === 0) {
+                            bucketsList.innerHTML =
+                                '<p class="text-gray-500">No existing buckets found.</p>';
+                            return;
+                        }
+
+                        bucketNames.forEach((bucketName) => {
+                            const link = document.createElement("a");
+                            link.href = "#";
+                            link.textContent = bucketName;
+                            link.className =
+                                "block text-blue-600 hover:underline p-2 bg-gray-50 rounded-md";
+
+                            link.addEventListener("click", (event) => {
+                                event.preventDefault();
+                                const password = prompt(
+                                    `Enter password for bucket "${bucketName}":`,
+                                );
+
+                                if (password !== null) {
+                                    // Check if user clicked "Cancel"
+                                    window.location.href = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
+                                }
+                            });
+
+                            bucketsList.appendChild(link);
+                        });
+                    } catch (error) {
+                        console.error("Error fetching buckets:", error);
+                        bucketsList.innerHTML =
+                            '<p class="text-red-500">Could not load bucket list.</p>';
+                    }
                 }
-            }
+
+                fetchAndRenderBuckets();
+            });
         </script>
     </body>
 </html>
