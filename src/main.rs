@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::Mutex;
 use tokio;
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -123,7 +123,6 @@ async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -
 
     if let Some(bucket) = buckets.get(bucket_name) {
         if bucket.password == password {
-            info!("Served requests for bucket");
             HttpResponse::Ok().json(&bucket.requests)
         } else {
             warn!("Invalid password provided for bucket");
@@ -136,6 +135,62 @@ async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -
 }
 
 #[instrument(skip(app_state))]
+#[instrument(skip(req, app_state), fields(bucket_name = %req.match_info().get("bucket_name").unwrap_or("unknown")))]
+async fn delete_bucket(req: HttpRequest, app_state: web::Data<AppState>) -> impl Responder {
+    let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
+    let password = match req.headers().get("X-Bucket-Password") {
+        Some(p) => p.to_str().unwrap_or(""),
+        None => {
+            error!("Password required for deletion but not provided");
+            return HttpResponse::Unauthorized().body("Password required");
+        }
+    };
+
+    let mut buckets = app_state.buckets.lock().unwrap();
+
+    if let Some(bucket) = buckets.get(bucket_name) {
+        if bucket.password == password {
+            buckets.remove(bucket_name);
+            info!("Successfully deleted bucket");
+            HttpResponse::Ok().body("Bucket deleted")
+        } else {
+            error!("Invalid password provided for deletion");
+            HttpResponse::Unauthorized().body("Invalid password")
+        }
+    } else {
+        error!("Bucket not found for deletion");
+        HttpResponse::NotFound().body("Bucket not found")
+    }
+}
+
+#[instrument(skip(req, app_state), fields(bucket_name = %req.match_info().get("bucket_name").unwrap_or("unknown")))]
+async fn clear_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -> impl Responder {
+    let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
+    let password = match req.headers().get("X-Bucket-Password") {
+        Some(p) => p.to_str().unwrap_or(""),
+        None => {
+            error!("Password required for clearing requests but not provided");
+            return HttpResponse::Unauthorized().body("Password required");
+        }
+    };
+
+    let mut buckets = app_state.buckets.lock().unwrap();
+
+    if let Some(bucket) = buckets.get_mut(bucket_name) {
+        if bucket.password == password {
+            bucket.requests.clear();
+            info!("Successfully cleared requests from bucket");
+            HttpResponse::Ok().body("Bucket requests cleared")
+        } else {
+            error!("Invalid password provided for clearing requests");
+            HttpResponse::Unauthorized().body("Invalid password")
+        }
+    } else {
+        error!("Attempted to clear requests from a bucket that does not exist");
+        HttpResponse::NotFound().body("Bucket not found")
+    }
+}
+
 async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
     let buckets = app_state.buckets.lock().unwrap();
     let names: Vec<String> = buckets.keys().cloned().collect();
@@ -173,6 +228,11 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/api")
                     .route("/buckets", web::get().to(list_buckets))
+                    .route(
+                        "/clear/{bucket_name}",
+                        web::post().to(clear_bucket_requests),
+                    )
+                    .route("/delete/{bucket_name}", web::delete().to(delete_bucket))
                     .route("/create/{bucket_name}", web::post().to(create_bucket))
                     .route(
                         "/requests/{bucket_name}",

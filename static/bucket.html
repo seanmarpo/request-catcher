@@ -32,11 +32,31 @@
                         ></code>
                     </p>
                 </div>
-                <a
-                    href="/ui/"
-                    class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
-                    >Create Another Bucket</a
-                >
+                <div class="flex space-x-2">
+                    <button
+                        id="share-btn"
+                        class="bg-indigo-500 text-white px-4 py-2 rounded-md hover:bg-indigo-600"
+                    >
+                        Share
+                    </button>
+                    <a
+                        href="/ui/"
+                        class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
+                        >Create Another Bucket</a
+                    >
+                    <button
+                        id="clear-requests-btn"
+                        class="bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600"
+                    >
+                        Clear Requests
+                    </button>
+                    <button
+                        id="delete-bucket-btn"
+                        class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600"
+                    >
+                        Delete Bucket
+                    </button>
+                </div>
             </div>
 
             <div class="bg-white p-6 rounded-lg shadow-md">
@@ -71,6 +91,28 @@
                     document.getElementById("requestsContainer");
                 const pollingIndicator =
                     document.getElementById("polling-indicator");
+                const shareBtn = document.getElementById("share-btn");
+                const clearRequestsBtn =
+                    document.getElementById("clear-requests-btn");
+                const deleteBucketBtn =
+                    document.getElementById("delete-bucket-btn");
+
+                shareBtn.addEventListener("click", () => {
+                    navigator.clipboard.writeText(window.location.href).then(
+                        () => {
+                            shareBtn.textContent = "Copied!";
+                            setTimeout(() => {
+                                shareBtn.textContent = "Share";
+                            }, 2000);
+                        },
+                        (err) => {
+                            console.error("Could not copy URL: ", err);
+                            alert(
+                                "Failed to copy URL. Please copy it manually from the address bar.",
+                            );
+                        },
+                    );
+                });
 
                 if (!bucketName || !password) {
                     requestsContainer.innerHTML =
@@ -80,6 +122,72 @@
 
                 bucketNameDisplay.textContent = bucketName;
                 captureUrl.textContent = `${window.location.origin}/${bucketName}`;
+
+                clearRequestsBtn.addEventListener("click", async () => {
+                    if (
+                        !confirm(
+                            `Are you sure you want to clear all requests from bucket "${bucketName}"?`,
+                        )
+                    ) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(
+                            `/api/clear/${bucketName}`,
+                            {
+                                method: "POST",
+                                headers: {
+                                    "X-Bucket-Password": password,
+                                },
+                            },
+                        );
+
+                        if (response.ok) {
+                            fetchAndDisplayRequests();
+                        } else {
+                            const errorText = await response.text();
+                            alert(`Error clearing requests: ${errorText}`);
+                        }
+                    } catch (error) {
+                        console.error("Error clearing requests:", error);
+                        alert("An error occurred while clearing requests.");
+                    }
+                });
+
+                deleteBucketBtn.addEventListener("click", async () => {
+                    if (
+                        !confirm(
+                            `Are you sure you want to delete the bucket "${bucketName}"? This action cannot be undone.`,
+                        )
+                    ) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(
+                            `/api/delete/${bucketName}`,
+                            {
+                                method: "DELETE",
+                                headers: {
+                                    "X-Bucket-Password": password,
+                                },
+                            },
+                        );
+                        if (response.ok) {
+                            alert(
+                                `Bucket "${bucketName}" was successfully deleted.`,
+                            );
+                            window.location.href = "/ui/";
+                        } else {
+                            const errorText = await response.text();
+                            alert(`Error deleting bucket: ${errorText}`);
+                        }
+                    } catch (error) {
+                        console.error("Error deleting bucket:", error);
+                        alert("An error occurred while deleting the bucket.");
+                    }
+                });
 
                 let pollInterval;
 
