@@ -13,6 +13,9 @@
             body {
                 font-family: "Inter", sans-serif;
             }
+            pre {
+                box-sizing: border-box;
+            }
         </style>
         <script>
             // Apply dark mode based on system preference
@@ -98,75 +101,442 @@
         </div>
 
         <script>
-            document.addEventListener("DOMContentLoaded", () => {
-                const urlParams = new URLSearchParams(window.location.search);
-                const bucketName = urlParams.get("name");
-                const password = urlParams.get("password");
+            (() => {
+                // DOM element cache
+                const elements = {};
 
-                const bucketNameDisplay = document.getElementById(
-                    "bucket-name-display",
-                );
-                const captureUrl = document.getElementById("capture-url");
-                const requestsContainer =
-                    document.getElementById("requestsContainer");
-                const pollingIndicator =
-                    document.getElementById("polling-indicator");
-                const shareBtn = document.getElementById("share-btn");
-                const clearRequestsBtn =
-                    document.getElementById("clear-requests-btn");
-                const deleteBucketBtn =
-                    document.getElementById("delete-bucket-btn");
-                const copyUrlBtn = document.getElementById("copy-url-btn");
+                // State management
+                const state = {
+                    bucketName: null,
+                    password: null,
+                    pollInterval: null,
+                    collapsedRequests: new Set(),
+                    expandedBodies: new Set(),
+                };
 
-                copyUrlBtn.addEventListener("click", () => {
-                    const url = `${window.location.origin}/${bucketName}`;
-                    navigator.clipboard.writeText(url).then(
-                        () => {
-                            copyUrlBtn.textContent = "Copied!";
-                            setTimeout(() => {
-                                copyUrlBtn.textContent = "Copy";
-                            }, 2000);
-                        },
-                        (err) => {
-                            console.error("Could not copy URL: ", err);
-                            alert("Failed to copy URL.");
-                        },
-                    );
-                });
-
-                shareBtn.addEventListener("click", () => {
-                    navigator.clipboard.writeText(window.location.href).then(
-                        () => {
-                            shareBtn.textContent = "Copied!";
-                            setTimeout(() => {
-                                shareBtn.textContent = "Share";
-                            }, 2000);
-                        },
-                        (err) => {
-                            console.error("Could not copy URL: ", err);
-                            alert(
-                                "Failed to copy URL. Please copy it manually from the address bar.",
-                            );
-                        },
-                    );
-                });
-
-                if (!bucketName || !password) {
-                    const errorMsg = document.createElement("p");
-                    errorMsg.className = "text-red-500 font-bold";
-                    errorMsg.textContent =
-                        "Error: Bucket name or password not provided in the URL.";
-                    requestsContainer.replaceChildren(errorMsg);
-                    return;
+                // Helper: Create element with class and optional text
+                function createElement(tag, className, textContent = null) {
+                    const el = document.createElement(tag);
+                    if (className) el.className = className;
+                    if (textContent) el.textContent = textContent;
+                    return el;
                 }
 
-                bucketNameDisplay.textContent = bucketName;
-                captureUrl.textContent = `${window.location.origin}/${bucketName}`;
+                // Helper: Generate unique hash for request
+                function getRequestHash(req) {
+                    return `${req.timestamp}|${req.method}|${req.path}`;
+                }
 
-                clearRequestsBtn.addEventListener("click", async () => {
+                // Helper: Copy to clipboard with feedback
+                async function copyToClipboard(text, button, originalText) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        button.textContent = "Copied!";
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 2000);
+                    } catch (err) {
+                        console.error("Could not copy text:", err);
+                        alert("Failed to copy. Please copy manually.");
+                    }
+                }
+
+                // Helper: Update polling indicator status
+                function updatePollingIndicator(status, message) {
+                    const indicator = elements.pollingIndicator;
+                    indicator.classList.remove(
+                        "animate-pulse",
+                        "bg-green-500",
+                        "bg-red-500",
+                    );
+
+                    if (status === "active") {
+                        indicator.classList.add("bg-green-500");
+                        indicator.title =
+                            message ||
+                            `Polling active. Last check: ${new Date().toLocaleTimeString()}`;
+                    } else if (status === "error") {
+                        indicator.classList.add("bg-red-500");
+                        indicator.title = message || "Polling error";
+                    } else if (status === "loading") {
+                        indicator.classList.add("animate-pulse");
+                    }
+                }
+
+                // Build query parameters section
+                function buildQueryParamsSection(queryParams) {
+                    if (!queryParams || Object.keys(queryParams).length === 0) {
+                        return null;
+                    }
+
+                    const queryDiv = createElement("div", "mt-2");
+                    const queryTitle = createElement(
+                        "h4",
+                        "font-medium text-sm",
+                        "Query Parameters:",
+                    );
+                    queryDiv.appendChild(queryTitle);
+
+                    const queryList = createElement(
+                        "ul",
+                        "list-disc list-inside text-sm",
+                    );
+                    for (const [key, value] of Object.entries(queryParams)) {
+                        const item = createElement("li");
+                        const strong = createElement(
+                            "strong",
+                            null,
+                            `${key}: `,
+                        );
+                        item.appendChild(strong);
+                        item.appendChild(document.createTextNode(value));
+                        queryList.appendChild(item);
+                    }
+                    queryDiv.appendChild(queryList);
+                    return queryDiv;
+                }
+
+                // Build headers section
+                function buildHeadersSection(headers) {
+                    const headersDiv = createElement("div", "mt-2");
+                    const headersTitle = createElement(
+                        "h4",
+                        "font-medium text-sm",
+                        "Headers:",
+                    );
+                    headersDiv.appendChild(headersTitle);
+
+                    const headersList = createElement(
+                        "ul",
+                        "list-disc list-inside text-sm",
+                    );
+                    for (const [key, value] of Object.entries(headers)) {
+                        const item = createElement("li");
+                        const strong = createElement(
+                            "strong",
+                            null,
+                            `${key}: `,
+                        );
+                        item.appendChild(strong);
+                        item.appendChild(document.createTextNode(value));
+                        headersList.appendChild(item);
+                    }
+                    headersDiv.appendChild(headersList);
+                    return headersDiv;
+                }
+
+                // Build body section
+                function buildBodySection(req, requestHash, index) {
+                    const bodyDiv = createElement("div", "mt-2");
+                    const bodyTitle = createElement(
+                        "h4",
+                        "font-medium text-sm",
+                        "Body:",
+                    );
+                    bodyDiv.appendChild(bodyTitle);
+
+                    const bodyText = req.body || "No body";
+                    const bodyLength = bodyText.length;
+                    const isBinary = /[\x00-\x08\x0E-\x1F]/.test(bodyText);
+
+                    if (bodyLength > 1000 || isBinary) {
+                        // Add body info
+                        const bodyInfo = createElement(
+                            "p",
+                            "text-xs text-gray-600 dark:text-gray-400 mb-1",
+                            isBinary
+                                ? `Binary data (${bodyLength.toLocaleString()} bytes) - likely a file upload`
+                                : `Large body (${bodyLength.toLocaleString()} characters)`,
+                        );
+                        bodyDiv.appendChild(bodyInfo);
+
+                        if (isBinary) {
+                            // Binary data message
+                            const binaryMsg = createElement(
+                                "div",
+                                "bg-gray-200 dark:bg-gray-600 p-2 rounded-md text-xs italic",
+                                "Binary content not displayed",
+                            );
+                            bodyDiv.appendChild(binaryMsg);
+                        } else {
+                            // Large text with expand/collapse
+                            const bodyContainer = createElement(
+                                "div",
+                                "relative",
+                            );
+                            const isExpanded =
+                                state.expandedBodies.has(requestHash);
+
+                            const bodyWrapper = createElement(
+                                "div",
+                                "bg-gray-200 dark:bg-gray-600 rounded-md",
+                            );
+                            bodyWrapper.id = `body-wrapper-${index}`;
+                            bodyWrapper.style.display = isExpanded
+                                ? "block"
+                                : "none";
+                            bodyWrapper.style.maxHeight = isExpanded
+                                ? "24rem"
+                                : "0";
+                            bodyWrapper.style.overflowY = isExpanded
+                                ? "auto"
+                                : "hidden";
+
+                            const bodyPre = createElement(
+                                "pre",
+                                "p-2 whitespace-pre-wrap text-xs break-words",
+                                bodyText,
+                            );
+                            bodyPre.style.margin = "0";
+                            bodyWrapper.appendChild(bodyPre);
+                            bodyContainer.appendChild(bodyWrapper);
+
+                            const expandBtn = createElement(
+                                "button",
+                                "mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline",
+                                isExpanded ? "Hide body" : "Show body",
+                            );
+                            expandBtn.id = `expand-body-${index}`;
+                            expandBtn.addEventListener("click", (e) => {
+                                e.stopPropagation();
+                                const wrapper = document.getElementById(
+                                    `body-wrapper-${index}`,
+                                );
+                                const btn = document.getElementById(
+                                    `expand-body-${index}`,
+                                );
+
+                                const isCurrentlyHidden =
+                                    wrapper.style.display === "none";
+                                wrapper.style.display = isCurrentlyHidden
+                                    ? "block"
+                                    : "none";
+                                wrapper.style.maxHeight = isCurrentlyHidden
+                                    ? "24rem"
+                                    : "0";
+                                wrapper.style.overflowY = isCurrentlyHidden
+                                    ? "auto"
+                                    : "hidden";
+                                btn.textContent = isCurrentlyHidden
+                                    ? "Hide body"
+                                    : "Show body";
+
+                                if (isCurrentlyHidden) {
+                                    state.expandedBodies.add(requestHash);
+                                } else {
+                                    state.expandedBodies.delete(requestHash);
+                                }
+                            });
+
+                            bodyContainer.appendChild(expandBtn);
+                            bodyDiv.appendChild(bodyContainer);
+                        }
+                    } else {
+                        // Small body - show normally
+                        const bodyPre = createElement(
+                            "pre",
+                            "bg-gray-200 dark:bg-gray-600 p-2 rounded-md whitespace-pre-wrap text-xs break-words",
+                            bodyText,
+                        );
+                        bodyDiv.appendChild(bodyPre);
+                    }
+
+                    return bodyDiv;
+                }
+
+                // Build a single request element
+                function buildRequestElement(req, index) {
+                    const requestHash = getRequestHash(req);
+                    const reqElement = createElement(
+                        "div",
+                        "border dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 overflow-hidden mb-2",
+                    );
+
+                    // Header section (collapsible trigger)
+                    const headerSection = createElement(
+                        "div",
+                        "p-2 bg-gray-100 dark:bg-gray-600 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-500 flex justify-between items-center",
+                    );
+                    const headerLeft = createElement("div");
+                    const titleEl = createElement(
+                        "h3",
+                        "font-semibold text-sm",
+                        `${req.method} ${req.path}`,
+                    );
+                    headerLeft.appendChild(titleEl);
+                    headerSection.appendChild(headerLeft);
+
+                    // Expand/collapse indicator
+                    const isCollapsed =
+                        state.collapsedRequests.has(requestHash);
+                    const indicator = createElement(
+                        "span",
+                        "text-gray-500 font-bold",
+                        isCollapsed ? "▶" : "▼",
+                    );
+                    indicator.id = `indicator-${index}`;
+                    headerSection.appendChild(indicator);
+                    reqElement.appendChild(headerSection);
+
+                    // Details section
+                    const detailsSection = createElement("div", "p-3");
+                    detailsSection.id = `details-${index}`;
+                    detailsSection.style.display = isCollapsed
+                        ? "none"
+                        : "block";
+
+                    // Full path
+                    const pathEl = createElement(
+                        "p",
+                        "text-sm text-gray-600 dark:text-gray-300",
+                    );
+                    pathEl.textContent = "Full Path: ";
+                    const pathCodeEl = createElement(
+                        "code",
+                        "bg-gray-200 dark:bg-gray-600 p-1 rounded text-xs",
+                    );
+                    let fullPath = req.path;
+                    if (
+                        req.query_params &&
+                        Object.keys(req.query_params).length > 0
+                    ) {
+                        const queryString = Object.entries(req.query_params)
+                            .map(([key, value]) => `${key}=${value}`)
+                            .join("&");
+                        fullPath = `${req.path}?${queryString}`;
+                    }
+                    pathCodeEl.textContent = fullPath;
+                    pathEl.appendChild(pathCodeEl);
+                    detailsSection.appendChild(pathEl);
+
+                    // Query parameters
+                    const querySection = buildQueryParamsSection(
+                        req.query_params,
+                    );
+                    if (querySection) {
+                        detailsSection.appendChild(querySection);
+                    }
+
+                    // Headers
+                    detailsSection.appendChild(
+                        buildHeadersSection(req.headers),
+                    );
+
+                    // Body
+                    detailsSection.appendChild(
+                        buildBodySection(req, requestHash, index),
+                    );
+
+                    reqElement.appendChild(detailsSection);
+
+                    // Toggle handler
+                    headerSection.addEventListener("click", () => {
+                        const details = document.getElementById(
+                            `details-${index}`,
+                        );
+                        const indicator = document.getElementById(
+                            `indicator-${index}`,
+                        );
+
+                        if (details.style.display === "none") {
+                            details.style.display = "block";
+                            indicator.textContent = "▼";
+                            state.collapsedRequests.delete(requestHash);
+                        } else {
+                            details.style.display = "none";
+                            indicator.textContent = "▶";
+                            state.collapsedRequests.add(requestHash);
+                        }
+                    });
+
+                    return reqElement;
+                }
+
+                // Fetch and display requests
+                async function fetchAndDisplayRequests() {
+                    updatePollingIndicator("loading");
+
+                    try {
+                        const response = await fetch(
+                            `/api/requests/${state.bucketName}`,
+                            {
+                                headers: {
+                                    "X-Bucket-Password": state.password,
+                                },
+                            },
+                        );
+
+                        if (!response.ok) {
+                            clearInterval(state.pollInterval);
+                            updatePollingIndicator(
+                                "error",
+                                "Authentication error",
+                            );
+
+                            const errorText = await response.text();
+                            const errorPara = createElement(
+                                "p",
+                                "text-red-500",
+                            );
+                            const strongEl = createElement(
+                                "strong",
+                                null,
+                                "Error fetching requests:",
+                            );
+                            errorPara.appendChild(strongEl);
+                            errorPara.appendChild(
+                                document.createTextNode(
+                                    ` ${errorText} (Status: ${response.status}). Polling has stopped.`,
+                                ),
+                            );
+                            elements.requestsContainer.replaceChildren(
+                                errorPara,
+                            );
+                            return;
+                        }
+
+                        const requests = await response.json();
+                        updatePollingIndicator("active");
+
+                        if (requests.length === 0) {
+                            const noRequestsMsg = createElement(
+                                "p",
+                                null,
+                                "No requests captured yet.",
+                            );
+                            elements.requestsContainer.replaceChildren(
+                                noRequestsMsg,
+                            );
+                        } else {
+                            // Build all request elements
+                            const fragment = document.createDocumentFragment();
+                            requests.reverse().forEach((req, index) => {
+                                fragment.appendChild(
+                                    buildRequestElement(req, index),
+                                );
+                            });
+                            elements.requestsContainer.replaceChildren(
+                                fragment,
+                            );
+                        }
+                    } catch (error) {
+                        console.error("Error:", error);
+                        updatePollingIndicator("error", "Network error");
+
+                        const errorPara = createElement(
+                            "p",
+                            "text-red-500",
+                            "An error occurred while fetching requests. Check the console.",
+                        );
+                        elements.requestsContainer.replaceChildren(errorPara);
+                    }
+                }
+
+                // Clear all requests
+                async function clearRequests() {
                     if (
                         !confirm(
-                            `Are you sure you want to clear all requests from bucket "${bucketName}"?`,
+                            `Are you sure you want to clear all requests from bucket "${state.bucketName}"?`,
                         )
                     ) {
                         return;
@@ -174,11 +544,11 @@
 
                     try {
                         const response = await fetch(
-                            `/api/clear/${bucketName}`,
+                            `/api/clear/${state.bucketName}`,
                             {
                                 method: "POST",
                                 headers: {
-                                    "X-Bucket-Password": password,
+                                    "X-Bucket-Password": state.password,
                                 },
                             },
                         );
@@ -193,12 +563,13 @@
                         console.error("Error clearing requests:", error);
                         alert("An error occurred while clearing requests.");
                     }
-                });
+                }
 
-                deleteBucketBtn.addEventListener("click", async () => {
+                // Delete bucket
+                async function deleteBucket() {
                     if (
                         !confirm(
-                            `Are you sure you want to delete the bucket "${bucketName}"? This action cannot be undone.`,
+                            `Are you sure you want to delete the bucket "${state.bucketName}"? This action cannot be undone.`,
                         )
                     ) {
                         return;
@@ -206,17 +577,18 @@
 
                     try {
                         const response = await fetch(
-                            `/api/delete/${bucketName}`,
+                            `/api/delete/${state.bucketName}`,
                             {
                                 method: "DELETE",
                                 headers: {
-                                    "X-Bucket-Password": password,
+                                    "X-Bucket-Password": state.password,
                                 },
                             },
                         );
+
                         if (response.ok) {
                             alert(
-                                `Bucket "${bucketName}" was successfully deleted.`,
+                                `Bucket "${state.bucketName}" was successfully deleted.`,
                             );
                             window.location.href = "/ui/";
                         } else {
@@ -227,295 +599,88 @@
                         console.error("Error deleting bucket:", error);
                         alert("An error occurred while deleting the bucket.");
                     }
-                });
-
-                let pollInterval;
-                const collapsedRequests = new Set(); // Track collapsed requests by unique hash
-
-                // Generate a unique hash for a request based on its content and timestamp
-                function getRequestHash(req) {
-                    return `${req.timestamp}|${req.method}|${req.path}`;
                 }
 
-                async function fetchAndDisplayRequests() {
-                    pollingIndicator.classList.remove("bg-green-500");
-                    pollingIndicator.classList.add("animate-pulse");
+                // Initialize the application
+                function init() {
+                    // Cache DOM elements
+                    elements.bucketNameDisplay = document.getElementById(
+                        "bucket-name-display",
+                    );
+                    elements.captureUrl =
+                        document.getElementById("capture-url");
+                    elements.requestsContainer =
+                        document.getElementById("requestsContainer");
+                    elements.pollingIndicator =
+                        document.getElementById("polling-indicator");
+                    elements.shareBtn = document.getElementById("share-btn");
+                    elements.clearRequestsBtn =
+                        document.getElementById("clear-requests-btn");
+                    elements.deleteBucketBtn =
+                        document.getElementById("delete-bucket-btn");
+                    elements.copyUrlBtn =
+                        document.getElementById("copy-url-btn");
 
-                    try {
-                        const response = await fetch(
-                            `/api/requests/${bucketName}`,
-                            {
-                                headers: {
-                                    "X-Bucket-Password": password,
-                                },
-                            },
+                    // Get bucket info from URL
+                    const urlParams = new URLSearchParams(
+                        window.location.search,
+                    );
+                    state.bucketName = urlParams.get("name");
+                    state.password = urlParams.get("password");
+
+                    // Validate bucket info
+                    if (!state.bucketName || !state.password) {
+                        const errorMsg = createElement(
+                            "p",
+                            "text-red-500 font-bold",
+                            "Error: Bucket name or password not provided in the URL.",
                         );
-
-                        if (response.ok) {
-                            const requests = await response.json();
-                            pollingIndicator.classList.remove("animate-pulse");
-                            pollingIndicator.classList.add("bg-green-500");
-                            pollingIndicator.title = `Polling active. Last check: ${new Date().toLocaleTimeString()}`;
-
-                            requestsContainer.replaceChildren(); // Clear previous requests
-                            if (requests.length === 0) {
-                                const noRequestsMsg =
-                                    document.createElement("p");
-                                noRequestsMsg.textContent =
-                                    "No requests captured yet.";
-                                requestsContainer.appendChild(noRequestsMsg);
-                            } else {
-                                requests.reverse().forEach((req, index) => {
-                                    const requestHash = getRequestHash(req);
-                                    // Main container for the request
-                                    const reqElement =
-                                        document.createElement("div");
-                                    reqElement.className =
-                                        "border dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 overflow-hidden mb-2";
-
-                                    // Header section (always visible, clickable)
-                                    const headerSection =
-                                        document.createElement("div");
-                                    headerSection.className =
-                                        "p-2 bg-gray-100 dark:bg-gray-600 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-500 flex justify-between items-center";
-
-                                    const headerLeft =
-                                        document.createElement("div");
-
-                                    // Title (e.g., "GET /path")
-                                    const titleEl =
-                                        document.createElement("h3");
-                                    titleEl.className = "font-semibold text-sm";
-                                    titleEl.textContent = `${req.method} ${req.path}`;
-                                    headerLeft.appendChild(titleEl);
-
-                                    headerSection.appendChild(headerLeft);
-
-                                    // Expand/collapse indicator
-                                    const indicator =
-                                        document.createElement("span");
-                                    indicator.className =
-                                        "text-gray-500 font-bold";
-                                    const isCollapsed =
-                                        collapsedRequests.has(requestHash);
-                                    indicator.textContent = isCollapsed
-                                        ? "▶"
-                                        : "▼";
-                                    indicator.id = `indicator-${index}`;
-                                    headerSection.appendChild(indicator);
-
-                                    reqElement.appendChild(headerSection);
-
-                                    // Details section (collapsible)
-                                    const detailsSection =
-                                        document.createElement("div");
-                                    detailsSection.className = "p-3";
-                                    detailsSection.id = `details-${index}`;
-
-                                    // Restore collapse state from previous render
-                                    detailsSection.style.display = isCollapsed
-                                        ? "none"
-                                        : "block";
-
-                                    // Path (full path in details with query params)
-                                    const pathEl = document.createElement("p");
-                                    pathEl.className =
-                                        "text-sm text-gray-600 dark:text-gray-300";
-                                    pathEl.textContent = "Full Path: ";
-                                    const pathCodeEl =
-                                        document.createElement("code");
-                                    pathCodeEl.className =
-                                        "bg-gray-200 dark:bg-gray-600 p-1 rounded text-xs";
-
-                                    // Build full path with query parameters
-                                    let fullPath = req.path;
-                                    if (
-                                        req.query_params &&
-                                        Object.keys(req.query_params).length > 0
-                                    ) {
-                                        const queryString = Object.entries(
-                                            req.query_params,
-                                        )
-                                            .map(
-                                                ([key, value]) =>
-                                                    `${key}=${value}`,
-                                            )
-                                            .join("&");
-                                        fullPath = `${req.path}?${queryString}`;
-                                    }
-
-                                    pathCodeEl.textContent = fullPath;
-                                    pathEl.appendChild(pathCodeEl);
-                                    detailsSection.appendChild(pathEl);
-
-                                    // Query Parameters section
-                                    if (
-                                        req.query_params &&
-                                        Object.keys(req.query_params).length > 0
-                                    ) {
-                                        const queryDiv =
-                                            document.createElement("div");
-                                        queryDiv.className = "mt-2";
-                                        const queryTitle =
-                                            document.createElement("h4");
-                                        queryTitle.className =
-                                            "font-medium text-sm";
-                                        queryTitle.textContent =
-                                            "Query Parameters:";
-                                        queryDiv.appendChild(queryTitle);
-
-                                        const queryList =
-                                            document.createElement("ul");
-                                        queryList.className =
-                                            "list-disc list-inside text-sm";
-                                        for (const [
-                                            key,
-                                            value,
-                                        ] of Object.entries(req.query_params)) {
-                                            const queryItem =
-                                                document.createElement("li");
-                                            const strong =
-                                                document.createElement(
-                                                    "strong",
-                                                );
-                                            strong.textContent = `${key}: `;
-                                            queryItem.appendChild(strong);
-                                            queryItem.appendChild(
-                                                document.createTextNode(value),
-                                            );
-                                            queryList.appendChild(queryItem);
-                                        }
-                                        queryDiv.appendChild(queryList);
-                                        detailsSection.appendChild(queryDiv);
-                                    }
-
-                                    // Headers section
-                                    const headersDiv =
-                                        document.createElement("div");
-                                    headersDiv.className = "mt-2";
-                                    const headersTitle =
-                                        document.createElement("h4");
-                                    headersTitle.className =
-                                        "font-medium text-sm";
-                                    headersTitle.textContent = "Headers:";
-                                    headersDiv.appendChild(headersTitle);
-
-                                    const headersList =
-                                        document.createElement("ul");
-                                    headersList.className =
-                                        "list-disc list-inside text-sm";
-                                    for (const [key, value] of Object.entries(
-                                        req.headers,
-                                    )) {
-                                        const headerItem =
-                                            document.createElement("li");
-                                        const strong =
-                                            document.createElement("strong");
-                                        strong.textContent = `${key}: `;
-                                        headerItem.appendChild(strong);
-                                        // Use createTextNode to ensure value is treated as text
-                                        headerItem.appendChild(
-                                            document.createTextNode(value),
-                                        );
-                                        headersList.appendChild(headerItem);
-                                    }
-                                    headersDiv.appendChild(headersList);
-                                    detailsSection.appendChild(headersDiv);
-
-                                    // Body section
-                                    const bodyDiv =
-                                        document.createElement("div");
-                                    bodyDiv.className = "mt-2";
-                                    const bodyTitle =
-                                        document.createElement("h4");
-                                    bodyTitle.className = "font-medium text-sm";
-                                    bodyTitle.textContent = "Body:";
-                                    bodyDiv.appendChild(bodyTitle);
-
-                                    const bodyPre =
-                                        document.createElement("pre");
-                                    bodyPre.className =
-                                        "bg-gray-200 dark:bg-gray-600 p-2 rounded-md whitespace-pre-wrap text-xs";
-                                    // Using textContent is the key to preventing XSS here.
-                                    bodyPre.textContent = req.body || "No body";
-                                    bodyDiv.appendChild(bodyPre);
-                                    detailsSection.appendChild(bodyDiv);
-
-                                    // Add details section to request element
-                                    reqElement.appendChild(detailsSection);
-
-                                    // Add click handler to toggle visibility
-                                    headerSection.addEventListener(
-                                        "click",
-                                        () => {
-                                            const details =
-                                                document.getElementById(
-                                                    `details-${index}`,
-                                                );
-                                            const indicator =
-                                                document.getElementById(
-                                                    `indicator-${index}`,
-                                                );
-
-                                            if (
-                                                details.style.display === "none"
-                                            ) {
-                                                details.style.display = "block";
-                                                indicator.textContent = "▼";
-                                                collapsedRequests.delete(
-                                                    requestHash,
-                                                );
-                                            } else {
-                                                details.style.display = "none";
-                                                indicator.textContent = "▶";
-                                                collapsedRequests.add(
-                                                    requestHash,
-                                                );
-                                            }
-                                        },
-                                    );
-
-                                    // Add the fully constructed element to the container
-                                    requestsContainer.appendChild(reqElement);
-                                });
-                            }
-                        } else {
-                            // Stop polling on auth or not found errors
-                            clearInterval(pollInterval);
-                            pollingIndicator.classList.remove(
-                                "animate-pulse",
-                                "bg-green-500",
-                            );
-                            pollingIndicator.classList.add("bg-red-500");
-                            const errorText = await response.text();
-                            const errorPara = document.createElement("p");
-                            errorPara.className = "text-red-500";
-                            const strongEl = document.createElement("strong");
-                            strongEl.textContent = "Error fetching requests:";
-                            errorPara.appendChild(strongEl);
-                            errorPara.appendChild(
-                                document.createTextNode(
-                                    ` ${errorText} (Status: ${response.status}). Polling has stopped.`,
-                                ),
-                            );
-                            requestsContainer.replaceChildren(errorPara);
-                        }
-                    } catch (error) {
-                        console.error("Error:", error);
-                        pollingIndicator.classList.remove("animate-pulse");
-                        pollingIndicator.classList.add("bg-red-500");
-                        const errorPara = document.createElement("p");
-                        errorPara.className = "text-red-500";
-                        errorPara.textContent =
-                            "An error occurred while fetching requests. Check the console.";
-                        requestsContainer.replaceChildren(errorPara);
+                        elements.requestsContainer.replaceChildren(errorMsg);
+                        return;
                     }
+
+                    // Set bucket name and URL
+                    elements.bucketNameDisplay.textContent = state.bucketName;
+                    const captureUrlText = `${window.location.origin}/${state.bucketName}`;
+                    elements.captureUrl.textContent = captureUrlText;
+
+                    // Set up event listeners
+                    elements.copyUrlBtn.addEventListener("click", () => {
+                        copyToClipboard(
+                            captureUrlText,
+                            elements.copyUrlBtn,
+                            "Copy",
+                        );
+                    });
+
+                    elements.shareBtn.addEventListener("click", () => {
+                        copyToClipboard(
+                            window.location.href,
+                            elements.shareBtn,
+                            "Share",
+                        );
+                    });
+
+                    elements.clearRequestsBtn.addEventListener(
+                        "click",
+                        clearRequests,
+                    );
+                    elements.deleteBucketBtn.addEventListener(
+                        "click",
+                        deleteBucket,
+                    );
+
+                    // Start polling
+                    fetchAndDisplayRequests();
+                    state.pollInterval = setInterval(
+                        fetchAndDisplayRequests,
+                        3000,
+                    );
                 }
 
-                // Initial fetch, then poll every 3 seconds
-                fetchAndDisplayRequests();
-                pollInterval = setInterval(fetchAndDisplayRequests, 3000);
-            });
+                // Start when DOM is ready
+                document.addEventListener("DOMContentLoaded", init);
+            })();
         </script>
     </body>
 </html>
