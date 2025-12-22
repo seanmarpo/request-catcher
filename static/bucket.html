@@ -14,22 +14,40 @@
                 font-family: "Inter", sans-serif;
             }
         </style>
+        <script>
+            // Apply dark mode based on system preference
+            if (
+                window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+            ) {
+                document.documentElement.classList.add("dark");
+            }
+        </script>
     </head>
-    <body class="bg-gray-100 text-gray-800">
+    <body class="bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-100">
         <div class="container mx-auto p-4">
             <div
-                class="bg-white p-6 rounded-lg shadow-md mb-6 flex justify-between items-center"
+                class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md mb-6 flex justify-between items-center"
             >
                 <div>
                     <h1 class="text-2xl font-bold">
                         Viewing Bucket: <span id="bucket-name-display"></span>
                     </h1>
-                    <p class="text-sm text-gray-500 mt-2">
+                    <p
+                        class="text-sm text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-2"
+                    >
                         Send requests to:
                         <code
                             id="capture-url"
-                            class="bg-gray-200 p-1 rounded"
+                            class="bg-gray-200 dark:bg-gray-700 p-1 rounded"
                         ></code>
+                        <button
+                            id="copy-url-btn"
+                            class="bg-gray-500 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded-md"
+                            title="Copy URL"
+                        >
+                            Copy
+                        </button>
                     </p>
                 </div>
                 <div class="flex space-x-2">
@@ -59,7 +77,7 @@
                 </div>
             </div>
 
-            <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="text-xl font-semibold">Captured Requests</h2>
                     <div class="flex items-center space-x-2">
@@ -68,7 +86,9 @@
                             class="w-3 h-3 bg-gray-400 rounded-full"
                             title="Polling inactive"
                         ></div>
-                        <span class="text-sm text-gray-600">Polling...</span>
+                        <span class="text-sm text-gray-600 dark:text-gray-400"
+                            >Polling...</span
+                        >
                     </div>
                 </div>
                 <div id="requestsContainer" class="space-y-4">
@@ -96,6 +116,23 @@
                     document.getElementById("clear-requests-btn");
                 const deleteBucketBtn =
                     document.getElementById("delete-bucket-btn");
+                const copyUrlBtn = document.getElementById("copy-url-btn");
+
+                copyUrlBtn.addEventListener("click", () => {
+                    const url = `${window.location.origin}/${bucketName}`;
+                    navigator.clipboard.writeText(url).then(
+                        () => {
+                            copyUrlBtn.textContent = "Copied!";
+                            setTimeout(() => {
+                                copyUrlBtn.textContent = "Copy";
+                            }, 2000);
+                        },
+                        (err) => {
+                            console.error("Could not copy URL: ", err);
+                            alert("Failed to copy URL.");
+                        },
+                    );
+                });
 
                 shareBtn.addEventListener("click", () => {
                     navigator.clipboard.writeText(window.location.href).then(
@@ -234,13 +271,13 @@
                                     const reqElement =
                                         document.createElement("div");
                                     reqElement.className =
-                                        "border rounded-md bg-gray-50 overflow-hidden mb-2";
+                                        "border dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 overflow-hidden mb-2";
 
                                     // Header section (always visible, clickable)
                                     const headerSection =
                                         document.createElement("div");
                                     headerSection.className =
-                                        "p-2 bg-gray-100 cursor-pointer hover:bg-gray-200 flex justify-between items-center";
+                                        "p-2 bg-gray-100 dark:bg-gray-600 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-500 flex justify-between items-center";
 
                                     const headerLeft =
                                         document.createElement("div");
@@ -282,12 +319,13 @@
 
                                     // Path (full path in details with query params)
                                     const pathEl = document.createElement("p");
-                                    pathEl.className = "text-sm text-gray-600";
+                                    pathEl.className =
+                                        "text-sm text-gray-600 dark:text-gray-300";
                                     pathEl.textContent = "Full Path: ";
                                     const pathCodeEl =
                                         document.createElement("code");
                                     pathCodeEl.className =
-                                        "bg-gray-200 p-1 rounded text-xs";
+                                        "bg-gray-200 dark:bg-gray-600 p-1 rounded text-xs";
 
                                     // Build full path with query parameters
                                     let fullPath = req.path;
@@ -397,7 +435,7 @@
                                     const bodyPre =
                                         document.createElement("pre");
                                     bodyPre.className =
-                                        "bg-gray-200 p-2 rounded-md whitespace-pre-wrap text-xs";
+                                        "bg-gray-200 dark:bg-gray-600 p-2 rounded-md whitespace-pre-wrap text-xs";
                                     // Using textContent is the key to preventing XSS here.
                                     bodyPre.textContent = req.body || "No body";
                                     bodyDiv.appendChild(bodyPre);
