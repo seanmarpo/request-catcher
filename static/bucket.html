@@ -115,8 +115,11 @@
                 });
 
                 if (!bucketName || !password) {
-                    requestsContainer.innerHTML =
-                        '<p class="text-red-500 font-bold">Error: Bucket name or password not provided in the URL.</p>';
+                    const errorMsg = document.createElement("p");
+                    errorMsg.className = "text-red-500 font-bold";
+                    errorMsg.textContent =
+                        "Error: Bucket name or password not provided in the URL.";
+                    requestsContainer.replaceChildren(errorMsg);
                     return;
                 }
 
@@ -190,6 +193,12 @@
                 });
 
                 let pollInterval;
+                const collapsedRequests = new Set(); // Track collapsed requests by unique hash
+
+                // Generate a unique hash for a request based on its content and timestamp
+                function getRequestHash(req) {
+                    return `${req.timestamp}|${req.method}|${req.path}`;
+                }
 
                 async function fetchAndDisplayRequests() {
                     pollingIndicator.classList.remove("bg-green-500");
@@ -211,37 +220,136 @@
                             pollingIndicator.classList.add("bg-green-500");
                             pollingIndicator.title = `Polling active. Last check: ${new Date().toLocaleTimeString()}`;
 
-                            requestsContainer.innerHTML = ""; // Clear previous requests
+                            requestsContainer.replaceChildren(); // Clear previous requests
                             if (requests.length === 0) {
-                                requestsContainer.innerHTML =
-                                    "<p>No requests captured yet.</p>";
+                                const noRequestsMsg =
+                                    document.createElement("p");
+                                noRequestsMsg.textContent =
+                                    "No requests captured yet.";
+                                requestsContainer.appendChild(noRequestsMsg);
                             } else {
-                                requests.reverse().forEach((req) => {
+                                requests.reverse().forEach((req, index) => {
+                                    const requestHash = getRequestHash(req);
                                     // Main container for the request
                                     const reqElement =
                                         document.createElement("div");
                                     reqElement.className =
-                                        "p-4 border rounded-md bg-gray-50";
+                                        "border rounded-md bg-gray-50 overflow-hidden mb-2";
 
-                                    // Title (e.g., "GET Request")
+                                    // Header section (always visible, clickable)
+                                    const headerSection =
+                                        document.createElement("div");
+                                    headerSection.className =
+                                        "p-2 bg-gray-100 cursor-pointer hover:bg-gray-200 flex justify-between items-center";
+
+                                    const headerLeft =
+                                        document.createElement("div");
+
+                                    // Title (e.g., "GET /path")
                                     const titleEl =
                                         document.createElement("h3");
-                                    titleEl.className = "font-semibold";
-                                    titleEl.textContent = `${req.method} Request`;
-                                    reqElement.appendChild(titleEl);
+                                    titleEl.className = "font-semibold text-sm";
+                                    titleEl.textContent = `${req.method} ${req.path}`;
+                                    headerLeft.appendChild(titleEl);
 
-                                    // Path
+                                    headerSection.appendChild(headerLeft);
+
+                                    // Expand/collapse indicator
+                                    const indicator =
+                                        document.createElement("span");
+                                    indicator.className =
+                                        "text-gray-500 font-bold";
+                                    const isCollapsed =
+                                        collapsedRequests.has(requestHash);
+                                    indicator.textContent = isCollapsed
+                                        ? "▶"
+                                        : "▼";
+                                    indicator.id = `indicator-${index}`;
+                                    headerSection.appendChild(indicator);
+
+                                    reqElement.appendChild(headerSection);
+
+                                    // Details section (collapsible)
+                                    const detailsSection =
+                                        document.createElement("div");
+                                    detailsSection.className = "p-3";
+                                    detailsSection.id = `details-${index}`;
+
+                                    // Restore collapse state from previous render
+                                    detailsSection.style.display = isCollapsed
+                                        ? "none"
+                                        : "block";
+
+                                    // Path (full path in details with query params)
                                     const pathEl = document.createElement("p");
-                                    pathEl.className =
-                                        "text-sm text-gray-600 mt-1";
-                                    pathEl.textContent = "Path: ";
+                                    pathEl.className = "text-sm text-gray-600";
+                                    pathEl.textContent = "Full Path: ";
                                     const pathCodeEl =
                                         document.createElement("code");
                                     pathCodeEl.className =
-                                        "bg-gray-200 p-1 rounded";
-                                    pathCodeEl.textContent = req.path;
+                                        "bg-gray-200 p-1 rounded text-xs";
+
+                                    // Build full path with query parameters
+                                    let fullPath = req.path;
+                                    if (
+                                        req.query_params &&
+                                        Object.keys(req.query_params).length > 0
+                                    ) {
+                                        const queryString = Object.entries(
+                                            req.query_params,
+                                        )
+                                            .map(
+                                                ([key, value]) =>
+                                                    `${key}=${value}`,
+                                            )
+                                            .join("&");
+                                        fullPath = `${req.path}?${queryString}`;
+                                    }
+
+                                    pathCodeEl.textContent = fullPath;
                                     pathEl.appendChild(pathCodeEl);
-                                    reqElement.appendChild(pathEl);
+                                    detailsSection.appendChild(pathEl);
+
+                                    // Query Parameters section
+                                    if (
+                                        req.query_params &&
+                                        Object.keys(req.query_params).length > 0
+                                    ) {
+                                        const queryDiv =
+                                            document.createElement("div");
+                                        queryDiv.className = "mt-2";
+                                        const queryTitle =
+                                            document.createElement("h4");
+                                        queryTitle.className =
+                                            "font-medium text-sm";
+                                        queryTitle.textContent =
+                                            "Query Parameters:";
+                                        queryDiv.appendChild(queryTitle);
+
+                                        const queryList =
+                                            document.createElement("ul");
+                                        queryList.className =
+                                            "list-disc list-inside text-sm";
+                                        for (const [
+                                            key,
+                                            value,
+                                        ] of Object.entries(req.query_params)) {
+                                            const queryItem =
+                                                document.createElement("li");
+                                            const strong =
+                                                document.createElement(
+                                                    "strong",
+                                                );
+                                            strong.textContent = `${key}: `;
+                                            queryItem.appendChild(strong);
+                                            queryItem.appendChild(
+                                                document.createTextNode(value),
+                                            );
+                                            queryList.appendChild(queryItem);
+                                        }
+                                        queryDiv.appendChild(queryList);
+                                        detailsSection.appendChild(queryDiv);
+                                    }
 
                                     // Headers section
                                     const headersDiv =
@@ -249,14 +357,15 @@
                                     headersDiv.className = "mt-2";
                                     const headersTitle =
                                         document.createElement("h4");
-                                    headersTitle.className = "font-medium";
+                                    headersTitle.className =
+                                        "font-medium text-sm";
                                     headersTitle.textContent = "Headers:";
                                     headersDiv.appendChild(headersTitle);
 
                                     const headersList =
                                         document.createElement("ul");
                                     headersList.className =
-                                        "list-disc list-inside";
+                                        "list-disc list-inside text-sm";
                                     for (const [key, value] of Object.entries(
                                         req.headers,
                                     )) {
@@ -273,7 +382,7 @@
                                         headersList.appendChild(headerItem);
                                     }
                                     headersDiv.appendChild(headersList);
-                                    reqElement.appendChild(headersDiv);
+                                    detailsSection.appendChild(headersDiv);
 
                                     // Body section
                                     const bodyDiv =
@@ -281,18 +390,52 @@
                                     bodyDiv.className = "mt-2";
                                     const bodyTitle =
                                         document.createElement("h4");
-                                    bodyTitle.className = "font-medium";
+                                    bodyTitle.className = "font-medium text-sm";
                                     bodyTitle.textContent = "Body:";
                                     bodyDiv.appendChild(bodyTitle);
 
                                     const bodyPre =
                                         document.createElement("pre");
                                     bodyPre.className =
-                                        "bg-gray-200 p-2 rounded-md whitespace-pre-wrap";
+                                        "bg-gray-200 p-2 rounded-md whitespace-pre-wrap text-xs";
                                     // Using textContent is the key to preventing XSS here.
                                     bodyPre.textContent = req.body || "No body";
                                     bodyDiv.appendChild(bodyPre);
-                                    reqElement.appendChild(bodyDiv);
+                                    detailsSection.appendChild(bodyDiv);
+
+                                    // Add details section to request element
+                                    reqElement.appendChild(detailsSection);
+
+                                    // Add click handler to toggle visibility
+                                    headerSection.addEventListener(
+                                        "click",
+                                        () => {
+                                            const details =
+                                                document.getElementById(
+                                                    `details-${index}`,
+                                                );
+                                            const indicator =
+                                                document.getElementById(
+                                                    `indicator-${index}`,
+                                                );
+
+                                            if (
+                                                details.style.display === "none"
+                                            ) {
+                                                details.style.display = "block";
+                                                indicator.textContent = "▼";
+                                                collapsedRequests.delete(
+                                                    requestHash,
+                                                );
+                                            } else {
+                                                details.style.display = "none";
+                                                indicator.textContent = "▶";
+                                                collapsedRequests.add(
+                                                    requestHash,
+                                                );
+                                            }
+                                        },
+                                    );
 
                                     // Add the fully constructed element to the container
                                     requestsContainer.appendChild(reqElement);
@@ -307,14 +450,27 @@
                             );
                             pollingIndicator.classList.add("bg-red-500");
                             const errorText = await response.text();
-                            requestsContainer.innerHTML = `<p class="text-red-500"><strong>Error fetching requests:</strong> ${errorText} (Status: ${response.status}). Polling has stopped.</p>`;
+                            const errorPara = document.createElement("p");
+                            errorPara.className = "text-red-500";
+                            const strongEl = document.createElement("strong");
+                            strongEl.textContent = "Error fetching requests:";
+                            errorPara.appendChild(strongEl);
+                            errorPara.appendChild(
+                                document.createTextNode(
+                                    ` ${errorText} (Status: ${response.status}). Polling has stopped.`,
+                                ),
+                            );
+                            requestsContainer.replaceChildren(errorPara);
                         }
                     } catch (error) {
                         console.error("Error:", error);
                         pollingIndicator.classList.remove("animate-pulse");
                         pollingIndicator.classList.add("bg-red-500");
-                        requestsContainer.innerHTML =
-                            '<p class="text-red-500">An error occurred while fetching requests. Check the console.</p>';
+                        const errorPara = document.createElement("p");
+                        errorPara.className = "text-red-500";
+                        errorPara.textContent =
+                            "An error occurred while fetching requests. Check the console.";
+                        requestsContainer.replaceChildren(errorPara);
                     }
                 }
 

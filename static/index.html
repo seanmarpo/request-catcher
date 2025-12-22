@@ -68,7 +68,7 @@
                 const bucketsList = document.getElementById("bucketsList");
 
                 // --- Create Bucket Logic ---
-                createBucketBtn.addEventListener("click", async () => {
+                async function createBucket() {
                     const bucketName = bucketNameInput.value.trim();
                     const password = bucketPasswordInput.value.trim();
 
@@ -99,6 +99,21 @@
                         console.error("Error:", error);
                         alert("An error occurred while creating the bucket.");
                     }
+                }
+
+                createBucketBtn.addEventListener("click", createBucket);
+
+                // Add enter key listener to both input fields
+                bucketNameInput.addEventListener("keypress", (event) => {
+                    if (event.key === "Enter") {
+                        createBucket();
+                    }
+                });
+
+                bucketPasswordInput.addEventListener("keypress", (event) => {
+                    if (event.key === "Enter") {
+                        createBucket();
+                    }
                 });
 
                 // --- List Existing Buckets Logic ---
@@ -110,11 +125,14 @@
                         }
                         const bucketNames = await response.json();
 
-                        bucketsList.innerHTML = ""; // Clear loading message
+                        bucketsList.replaceChildren(); // Clear loading message
 
                         if (bucketNames.length === 0) {
-                            bucketsList.innerHTML =
-                                '<p class="text-gray-500">No existing buckets found.</p>';
+                            const noOucketsMsg = document.createElement("p");
+                            noBucketsMsg.className = "text-gray-500";
+                            noBucketsMsg.textContent =
+                                "No existing buckets found.";
+                            bucketsList.appendChild(noBucketsMsg);
                             return;
                         }
 
@@ -141,8 +159,10 @@
                         });
                     } catch (error) {
                         console.error("Error fetching buckets:", error);
-                        bucketsList.innerHTML =
-                            '<p class="text-red-500">Could not load bucket list.</p>';
+                        const errorMsg = document.createElement("p");
+                        errorMsg.className = "text-red-500";
+                        errorMsg.textContent = "Could not load bucket list.";
+                        bucketsList.replaceChildren(errorMsg);
                     }
                 }
 

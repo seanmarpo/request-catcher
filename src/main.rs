@@ -6,8 +6,8 @@ use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::sync::Mutex;
-use tokio;
+use std::sync::RwLock;
+use subtle::ConstantTimeEq;
 use tracing::{error, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -15,8 +15,10 @@ use tracing_subscriber::EnvFilter;
 struct RequestData {
     path: String,
     method: String,
+    query_params: HashMap<String, String>,
     headers: HashMap<String, String>,
     body: String,
+    timestamp: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -26,7 +28,7 @@ struct Bucket {
 }
 
 struct AppState {
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: RwLock<HashMap<String, Bucket>>,
 }
 
 #[derive(Deserialize)]
@@ -40,7 +42,7 @@ async fn create_bucket(
     payload: web::Json<CreateBucketPayload>,
     app_state: web::Data<AppState>,
 ) -> impl Responder {
-    let bucket_name = path.into_inner();
+    let bucket_name = path.as_ref();
     let password = payload.into_inner().password;
 
     if password.is_empty() {
@@ -48,9 +50,9 @@ async fn create_bucket(
         return HttpResponse::BadRequest().body("Password cannot be empty");
     }
 
-    let mut buckets = app_state.buckets.lock().unwrap();
+    let mut buckets = app_state.buckets.write().unwrap();
 
-    if buckets.contains_key(&bucket_name) {
+    if buckets.contains_key(bucket_name) {
         warn!("Attempted to create a bucket that already exists");
         return HttpResponse::Conflict().body("Bucket already exists");
     }
@@ -59,7 +61,7 @@ async fn create_bucket(
         password,
         requests: Vec::new(),
     };
-    buckets.insert(bucket_name.clone(), new_bucket);
+    buckets.insert(bucket_name.to_string(), new_bucket);
 
     info!("Successfully created new bucket");
     HttpResponse::Ok().body("Bucket created")
@@ -73,18 +75,32 @@ async fn capture_request(
 ) -> impl Responder {
     let path = req.path();
     let bucket_name = match path.trim_start_matches('/').split('/').next() {
-        Some(name) if !name.is_empty() => name.to_string(),
+        Some(name) if !name.is_empty() => name,
         _ => {
             warn!("Request with invalid bucket path");
             return HttpResponse::BadRequest().body("Invalid bucket path.");
         }
     };
-    tracing::Span::current().record("bucket_name", &bucket_name.as_str());
+    tracing::Span::current().record("bucket_name", &bucket_name);
 
-    let mut buckets = app_state.buckets.lock().unwrap();
+    let mut buckets = app_state.buckets.write().unwrap();
 
-    if let Some(bucket) = buckets.get_mut(&bucket_name) {
+    if let Some(bucket) = buckets.get_mut(bucket_name) {
         let method = req.method().to_string();
+        let query_params = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                match (parts.next(), parts.next()) {
+                    (Some(key), Some(value)) if !key.is_empty() => {
+                        Some((key.to_string(), value.to_string()))
+                    }
+                    (Some(key), None) if !key.is_empty() => Some((key.to_string(), String::new())),
+                    _ => None,
+                }
+            })
+            .collect();
         let headers = req
             .headers()
             .iter()
@@ -95,8 +111,13 @@ async fn capture_request(
         let request_data = RequestData {
             path: path.to_string(),
             method: method.clone(),
+            query_params,
             headers,
             body,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
         };
 
         info!(method = %method, "Captured request");
@@ -119,10 +140,10 @@ async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -
         }
     };
 
-    let buckets = app_state.buckets.lock().unwrap();
+    let buckets = app_state.buckets.read().unwrap();
 
     if let Some(bucket) = buckets.get(bucket_name) {
-        if bucket.password == password {
+        if bucket.password.as_bytes().ct_eq(password.as_bytes()).into() {
             HttpResponse::Ok().json(&bucket.requests)
         } else {
             warn!("Invalid password provided for bucket");
@@ -134,7 +155,6 @@ async fn get_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>) -
     }
 }
 
-#[instrument(skip(app_state))]
 #[instrument(skip(req, app_state), fields(bucket_name = %req.match_info().get("bucket_name").unwrap_or("unknown")))]
 async fn delete_bucket(req: HttpRequest, app_state: web::Data<AppState>) -> impl Responder {
     let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
@@ -146,10 +166,10 @@ async fn delete_bucket(req: HttpRequest, app_state: web::Data<AppState>) -> impl
         }
     };
 
-    let mut buckets = app_state.buckets.lock().unwrap();
+    let mut buckets = app_state.buckets.write().unwrap();
 
     if let Some(bucket) = buckets.get(bucket_name) {
-        if bucket.password == password {
+        if bucket.password.as_bytes().ct_eq(password.as_bytes()).into() {
             buckets.remove(bucket_name);
             info!("Successfully deleted bucket");
             HttpResponse::Ok().body("Bucket deleted")
@@ -174,10 +194,10 @@ async fn clear_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>)
         }
     };
 
-    let mut buckets = app_state.buckets.lock().unwrap();
+    let mut buckets = app_state.buckets.write().unwrap();
 
     if let Some(bucket) = buckets.get_mut(bucket_name) {
-        if bucket.password == password {
+        if bucket.password.as_bytes().ct_eq(password.as_bytes()).into() {
             bucket.requests.clear();
             info!("Successfully cleared requests from bucket");
             HttpResponse::Ok().body("Bucket requests cleared")
@@ -192,7 +212,7 @@ async fn clear_bucket_requests(req: HttpRequest, app_state: web::Data<AppState>)
 }
 
 async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
-    let buckets = app_state.buckets.lock().unwrap();
+    let buckets = app_state.buckets.read().unwrap();
     let names: Vec<String> = buckets.keys().cloned().collect();
     info!(count = names.len(), "Served list of buckets");
     HttpResponse::Ok().json(names)
@@ -206,7 +226,7 @@ async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     let app_state = web::Data::new(AppState {
-        buckets: Mutex::new(HashMap::new()),
+        buckets: RwLock::new(HashMap::new()),
     });
 
     // Get host and port from environment variables, with defaults for development
@@ -225,6 +245,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .app_data(app_state.clone())
+            .app_data(web::PayloadConfig::new(10 * 1024 * 1024))
             .service(
                 web::scope("/api")
                     .route("/buckets", web::get().to(list_buckets))

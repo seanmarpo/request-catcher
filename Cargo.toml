@@ -1,6 +1,6 @@
 [package]
 name = "request_catcher"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -11,3 +11,11 @@ actix-files = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+subtle = "2.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = true
+panic = 'abort'
+opt-level = 3
