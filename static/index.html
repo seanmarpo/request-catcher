@@ -33,6 +33,16 @@
                 Create a new bucket or select an existing one below.
             </p>
 
+            <!-- Error Message Area -->
+            <div
+                id="errorMessage"
+                class="hidden bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-4 py-3 rounded-lg mb-6"
+                role="alert"
+            >
+                <strong class="font-bold">Error: </strong>
+                <span id="errorText"></span>
+            </div>
+
             <!-- Create Bucket Section -->
             <div
                 class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md mb-6"
@@ -53,7 +63,7 @@
                     />
                     <button
                         id="createBucketBtn"
-                        class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
+                        class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                     >
                         Create and View Bucket
                     </button>
@@ -72,21 +82,49 @@
         </div>
 
         <script>
-            document.addEventListener("DOMContentLoaded", () => {
-                const createBucketBtn =
-                    document.getElementById("createBucketBtn");
-                const bucketNameInput = document.getElementById("bucketName");
-                const bucketPasswordInput =
-                    document.getElementById("bucketPassword");
-                const bucketsList = document.getElementById("bucketsList");
+            (() => {
+                "use strict";
 
-                // --- Create Bucket Logic ---
+                // DOM element cache
+                const elements = {
+                    createBucketBtn: null,
+                    bucketNameInput: null,
+                    bucketPasswordInput: null,
+                    bucketsList: null,
+                    errorMessage: null,
+                    errorText: null,
+                };
+
+                // Utility: Show error message
+                function showError(message) {
+                    elements.errorText.textContent = message;
+                    elements.errorMessage.classList.remove("hidden");
+                    setTimeout(() => {
+                        elements.errorMessage.classList.add("hidden");
+                    }, 5000);
+                }
+
+                // Utility: Navigate to bucket page
+                function navigateToBucket(bucketName, password) {
+                    const url = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
+                    window.location.href = url;
+                }
+
+                // Utility: Create element helper
+                function createElement(tag, className, textContent = null) {
+                    const el = document.createElement(tag);
+                    if (className) el.className = className;
+                    if (textContent) el.textContent = textContent;
+                    return el;
+                }
+
+                // Create a new bucket
                 async function createBucket() {
-                    const bucketName = bucketNameInput.value.trim();
-                    const password = bucketPasswordInput.value.trim();
+                    const bucketName = elements.bucketNameInput.value.trim();
+                    const password = elements.bucketPasswordInput.value.trim();
 
                     if (!bucketName || !password) {
-                        alert(
+                        showError(
                             "Please enter both a bucket name and a password.",
                         );
                         return;
@@ -103,85 +141,128 @@
                         );
 
                         if (response.ok) {
-                            window.location.href = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
+                            navigateToBucket(bucketName, password);
                         } else {
                             const errorText = await response.text();
-                            alert(`Error creating bucket: ${errorText}`);
+                            showError(`Failed to create bucket: ${errorText}`);
                         }
                     } catch (error) {
-                        console.error("Error:", error);
-                        alert("An error occurred while creating the bucket.");
+                        console.error("Error creating bucket:", error);
+                        showError(
+                            "An error occurred while creating the bucket.",
+                        );
                     }
                 }
 
-                createBucketBtn.addEventListener("click", createBucket);
-
-                // Add enter key listener to both input fields
-                bucketNameInput.addEventListener("keypress", (event) => {
+                // Handle enter key press
+                function handleEnterKey(event) {
                     if (event.key === "Enter") {
                         createBucket();
                     }
-                });
+                }
 
-                bucketPasswordInput.addEventListener("keypress", (event) => {
-                    if (event.key === "Enter") {
-                        createBucket();
-                    }
-                });
+                // Handle bucket link click
+                function handleBucketClick(bucketName) {
+                    return (event) => {
+                        event.preventDefault();
+                        const password = prompt(
+                            `Enter password for bucket "${bucketName}":`,
+                        );
 
-                // --- List Existing Buckets Logic ---
+                        if (password !== null && password.trim() !== "") {
+                            navigateToBucket(bucketName, password);
+                        }
+                    };
+                }
+
+                // Create bucket link element
+                function createBucketLink(bucketName) {
+                    const link = createElement("a", "");
+                    link.href = "#";
+                    link.textContent = bucketName;
+                    link.className =
+                        "block text-blue-600 dark:text-blue-400 hover:underline p-2 bg-gray-50 dark:bg-gray-700 rounded-md transition-colors";
+                    link.addEventListener(
+                        "click",
+                        handleBucketClick(bucketName),
+                    );
+                    return link;
+                }
+
+                // Fetch and render the list of existing buckets
                 async function fetchAndRenderBuckets() {
                     try {
                         const response = await fetch("/api/buckets");
+
                         if (!response.ok) {
                             throw new Error("Failed to fetch bucket list.");
                         }
-                        const bucketNames = await response.json();
 
-                        bucketsList.replaceChildren(); // Clear loading message
+                        const bucketNames = await response.json();
+                        elements.bucketsList.replaceChildren();
 
                         if (bucketNames.length === 0) {
-                            const noBucketsMsg = document.createElement("p");
-                            noBucketsMsg.className =
-                                "text-gray-500 dark:text-gray-400";
-                            noBucketsMsg.textContent =
-                                "No existing buckets found.";
-                            bucketsList.appendChild(noBucketsMsg);
+                            const noBucketsMsg = createElement(
+                                "p",
+                                "text-gray-500 dark:text-gray-400",
+                                "No existing buckets found.",
+                            );
+                            elements.bucketsList.appendChild(noBucketsMsg);
                             return;
                         }
 
+                        const fragment = document.createDocumentFragment();
                         bucketNames.forEach((bucketName) => {
-                            const link = document.createElement("a");
-                            link.href = "#";
-                            link.textContent = bucketName;
-                            link.className =
-                                "block text-blue-600 dark:text-blue-400 hover:underline p-2 bg-gray-50 dark:bg-gray-700 rounded-md";
-
-                            link.addEventListener("click", (event) => {
-                                event.preventDefault();
-                                const password = prompt(
-                                    `Enter password for bucket "${bucketName}":`,
-                                );
-
-                                if (password !== null) {
-                                    // Check if user clicked "Cancel"
-                                    window.location.href = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
-                                }
-                            });
-
-                            bucketsList.appendChild(link);
+                            fragment.appendChild(createBucketLink(bucketName));
                         });
+                        elements.bucketsList.appendChild(fragment);
                     } catch (error) {
                         console.error("Error fetching buckets:", error);
-                        const errorMsg = document.createElement("p");
-                        errorMsg.className = "text-red-500";
-                        errorMsg.textContent = "Could not load bucket list.";
-                        bucketsList.replaceChildren(errorMsg);
+                        const errorMsg = createElement(
+                            "p",
+                            "text-red-500 dark:text-red-400",
+                            "Could not load bucket list.",
+                        );
+                        elements.bucketsList.replaceChildren(errorMsg);
                     }
                 }
 
-                fetchAndRenderBuckets();
-            });
+                // Initialize the application
+                function init() {
+                    // Cache DOM elements
+                    elements.createBucketBtn =
+                        document.getElementById("createBucketBtn");
+                    elements.bucketNameInput =
+                        document.getElementById("bucketName");
+                    elements.bucketPasswordInput =
+                        document.getElementById("bucketPassword");
+                    elements.bucketsList =
+                        document.getElementById("bucketsList");
+                    elements.errorMessage =
+                        document.getElementById("errorMessage");
+                    elements.errorText = document.getElementById("errorText");
+
+                    // Set up event listeners
+                    elements.createBucketBtn.addEventListener(
+                        "click",
+                        createBucket,
+                    );
+                    elements.bucketNameInput.addEventListener(
+                        "keypress",
+                        handleEnterKey,
+                    );
+                    elements.bucketPasswordInput.addEventListener(
+                        "keypress",
+                        handleEnterKey,
+                    );
+
+                    // Load existing buckets
+                    fetchAndRenderBuckets();
+                }
+
+                // Start when DOM is ready
+                document.addEventListener("DOMContentLoaded", init);
+            })();
         </script>
     </body>
 </html>

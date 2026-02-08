@@ -16,6 +16,142 @@
             pre {
                 box-sizing: border-box;
             }
+            /* JSON syntax highlighting */
+            .json-key {
+                color: #0066cc;
+            }
+            .dark .json-key {
+                color: #66b3ff;
+            }
+            .json-string {
+                color: #008800;
+            }
+            .dark .json-string {
+                color: #88cc88;
+            }
+            .json-number {
+                color: #cc6600;
+            }
+            .dark .json-number {
+                color: #ffaa66;
+            }
+            .json-boolean {
+                color: #aa00aa;
+            }
+            .dark .json-boolean {
+                color: #dd66dd;
+            }
+            .json-null {
+                color: #888888;
+            }
+            .dark .json-null {
+                color: #aaaaaa;
+            }
+
+            /* HTTP Method Colors */
+            .method-GET {
+                background-color: rgb(191, 219, 254);
+            }
+            .dark .method-GET {
+                background-color: rgb(30, 64, 175);
+            }
+            .method-GET:hover {
+                background-color: rgb(147, 197, 253);
+            }
+            .dark .method-GET:hover {
+                background-color: rgb(29, 78, 216);
+            }
+
+            .method-POST {
+                background-color: rgb(187, 247, 208);
+            }
+            .dark .method-POST {
+                background-color: rgb(22, 101, 52);
+            }
+            .method-POST:hover {
+                background-color: rgb(134, 239, 172);
+            }
+            .dark .method-POST:hover {
+                background-color: rgb(21, 128, 61);
+            }
+
+            .method-PUT {
+                background-color: rgb(254, 240, 138);
+            }
+            .dark .method-PUT {
+                background-color: rgb(133, 77, 14);
+            }
+            .method-PUT:hover {
+                background-color: rgb(253, 224, 71);
+            }
+            .dark .method-PUT:hover {
+                background-color: rgb(161, 98, 7);
+            }
+
+            .method-PATCH {
+                background-color: rgb(254, 215, 170);
+            }
+            .dark .method-PATCH {
+                background-color: rgb(154, 52, 18);
+            }
+            .method-PATCH:hover {
+                background-color: rgb(253, 186, 116);
+            }
+            .dark .method-PATCH:hover {
+                background-color: rgb(194, 65, 12);
+            }
+
+            .method-DELETE {
+                background-color: rgb(254, 202, 202);
+            }
+            .dark .method-DELETE {
+                background-color: rgb(127, 29, 29);
+            }
+            .method-DELETE:hover {
+                background-color: rgb(252, 165, 165);
+            }
+            .dark .method-DELETE:hover {
+                background-color: rgb(185, 28, 28);
+            }
+
+            .method-HEAD {
+                background-color: rgb(221, 214, 254);
+            }
+            .dark .method-HEAD {
+                background-color: rgb(88, 28, 135);
+            }
+            .method-HEAD:hover {
+                background-color: rgb(196, 181, 253);
+            }
+            .dark .method-HEAD:hover {
+                background-color: rgb(107, 33, 168);
+            }
+
+            .method-OPTIONS {
+                background-color: rgb(199, 210, 254);
+            }
+            .dark .method-OPTIONS {
+                background-color: rgb(55, 48, 163);
+            }
+            .method-OPTIONS:hover {
+                background-color: rgb(165, 180, 252);
+            }
+            .dark .method-OPTIONS:hover {
+                background-color: rgb(67, 56, 202);
+            }
+
+            .method-default {
+                background-color: rgb(229, 231, 235);
+            }
+            .dark .method-default {
+                background-color: rgb(31, 41, 55);
+            }
+            .method-default:hover {
+                background-color: rgb(209, 213, 219);
+            }
+            .dark .method-default:hover {
+                background-color: rgb(55, 65, 81);
+            }
         </style>
         <script>
             // Apply dark mode based on system preference
@@ -94,74 +230,274 @@
                         >
                     </div>
                 </div>
+
+                <div
+                    id="pagination-info"
+                    class="mb-4 text-sm text-gray-600 dark:text-gray-400 flex justify-between items-center"
+                    style="display: none"
+                >
+                    <span id="pagination-text"></span>
+                    <div class="flex items-center space-x-2">
+                        <label for="page-size-select" class="text-sm"
+                            >Items per page:</label
+                        >
+                        <select
+                            id="page-size-select"
+                            class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-sm"
+                        >
+                            <option value="10">10</option>
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div id="requestsContainer" class="space-y-4">
                     <p>Waiting for the first request...</p>
+                </div>
+
+                <div
+                    id="pagination-controls"
+                    class="mt-4 flex justify-center items-center space-x-2"
+                    style="display: none"
+                >
+                    <button
+                        id="first-page-btn"
+                        class="bg-gray-500 text-white px-3 py-1 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled
+                    >
+                        First
+                    </button>
+                    <button
+                        id="prev-page-btn"
+                        class="bg-gray-500 text-white px-3 py-1 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled
+                    >
+                        Previous
+                    </button>
+                    <span
+                        id="page-info"
+                        class="text-sm text-gray-600 dark:text-gray-400"
+                    ></span>
+                    <button
+                        id="next-page-btn"
+                        class="bg-gray-500 text-white px-3 py-1 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled
+                    >
+                        Next
+                    </button>
+                    <button
+                        id="last-page-btn"
+                        class="bg-gray-500 text-white px-3 py-1 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled
+                    >
+                        Last
+                    </button>
                 </div>
             </div>
         </div>
 
         <script>
             (() => {
-                // DOM element cache
-                const elements = {};
+                "use strict";
 
-                // State management
+                // ============================================================
+                // CONSTANTS
+                // ============================================================
+                const CONSTANTS = {
+                    POLL_INTERVAL_MS: 3000,
+                    HEADER_TRUNCATE_LENGTH: 100,
+                    BODY_SIZE_THRESHOLD: 1000,
+                    BODY_MAX_HEIGHT: "24rem",
+                    COPY_FEEDBACK_DURATION: 2000,
+                    METHODS_WITHOUT_BODY: new Set(["GET", "HEAD", "OPTIONS"]),
+                    DEFAULT_PAGE_SIZE: 50,
+                    MAX_PAGE_SIZE: 500,
+                };
+
+                // ============================================================
+                // STATE MANAGEMENT
+                // ============================================================
                 const state = {
                     bucketName: null,
                     password: null,
                     pollInterval: null,
                     collapsedRequests: new Set(),
                     expandedBodies: new Set(),
+                    expandedHeaders: new Set(),
+                    seenRequests: new Set(),
+                    currentPage: 1,
+                    pageSize: CONSTANTS.DEFAULT_PAGE_SIZE,
+                    totalRequests: 0,
+                    totalPages: 0,
                 };
 
-                // Helper: Create element with class and optional text
-                function createElement(tag, className, textContent = null) {
+                const elements = {};
+
+                // ============================================================
+                // UTILITY FUNCTIONS
+                // ============================================================
+
+                // Create element with optional class and text
+                function createElement(
+                    tag,
+                    className = null,
+                    textContent = null,
+                ) {
                     const el = document.createElement(tag);
                     if (className) el.className = className;
                     if (textContent) el.textContent = textContent;
                     return el;
                 }
 
-                // Helper: Generate unique hash for request
+                // Generate unique hash for request
                 function getRequestHash(req) {
                     return `${req.timestamp}|${req.method}|${req.path}`;
                 }
 
-                // Helper: Copy to clipboard with feedback
+                // Build query string from params object
+                function buildQueryString(params) {
+                    if (!params || Object.keys(params).length === 0) {
+                        return "";
+                    }
+                    return Object.entries(params)
+                        .map(([key, value]) => `${key}=${value}`)
+                        .join("&");
+                }
+
+                // Copy text to clipboard with visual feedback
                 async function copyToClipboard(text, button, originalText) {
                     try {
                         await navigator.clipboard.writeText(text);
                         button.textContent = "Copied!";
                         setTimeout(() => {
                             button.textContent = originalText;
-                        }, 2000);
+                        }, CONSTANTS.COPY_FEEDBACK_DURATION);
                     } catch (err) {
                         console.error("Could not copy text:", err);
                         alert("Failed to copy. Please copy manually.");
                     }
                 }
 
-                // Helper: Update polling indicator status
+                // Update polling indicator visual status
                 function updatePollingIndicator(status, message) {
                     const indicator = elements.pollingIndicator;
                     indicator.classList.remove(
                         "animate-pulse",
                         "bg-green-500",
                         "bg-red-500",
+                        "bg-gray-400",
                     );
 
-                    if (status === "active") {
-                        indicator.classList.add("bg-green-500");
-                        indicator.title =
-                            message ||
-                            `Polling active. Last check: ${new Date().toLocaleTimeString()}`;
-                    } else if (status === "error") {
-                        indicator.classList.add("bg-red-500");
-                        indicator.title = message || "Polling error";
-                    } else if (status === "loading") {
-                        indicator.classList.add("animate-pulse");
+                    switch (status) {
+                        case "active":
+                            indicator.classList.add("bg-green-500");
+                            indicator.title =
+                                message ||
+                                `Polling active. Last check: ${new Date().toLocaleTimeString()}`;
+                            break;
+                        case "error":
+                            indicator.classList.add("bg-red-500");
+                            indicator.title = message || "Polling error";
+                            break;
+                        case "loading":
+                            indicator.classList.add(
+                                "animate-pulse",
+                                "bg-gray-400",
+                            );
+                            indicator.title = "Loading...";
+                            break;
+                        default:
+                            indicator.classList.add("bg-gray-400");
+                            indicator.title = "Polling inactive";
                     }
                 }
+
+                // Check if string is valid JSON
+                function isJSON(str) {
+                    if (!str || str.trim() === "" || str === "No body") {
+                        return false;
+                    }
+                    try {
+                        JSON.parse(str);
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+
+                // Check if content contains binary data
+                function isBinaryData(str) {
+                    return /[\x00-\x08\x0E-\x1F]/.test(str);
+                }
+
+                // Syntax highlight JSON string
+                function syntaxHighlightJSON(json) {
+                    if (typeof json !== "string") {
+                        json = JSON.stringify(json, null, 2);
+                    }
+
+                    // Escape HTML entities
+                    json = json
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;");
+
+                    // Apply syntax highlighting
+                    return json.replace(
+                        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+                        (match) => {
+                            let cls = "json-number";
+                            if (/^"/.test(match)) {
+                                cls = /:$/.test(match)
+                                    ? "json-key"
+                                    : "json-string";
+                            } else if (/true|false/.test(match)) {
+                                cls = "json-boolean";
+                            } else if (/null/.test(match)) {
+                                cls = "json-null";
+                            }
+                            return `<span class="${cls}">${match}</span>`;
+                        },
+                    );
+                }
+
+                // Toggle element visibility and state tracking
+                function toggleVisibility(
+                    elementId,
+                    stateSet,
+                    stateKey,
+                    showText,
+                    hideText,
+                ) {
+                    const element = document.getElementById(elementId);
+                    const button = document.getElementById(`${elementId}-btn`);
+
+                    const isCurrentlyHidden = element.style.display === "none";
+
+                    element.style.display = isCurrentlyHidden
+                        ? "block"
+                        : "none";
+                    if (button) {
+                        button.textContent = isCurrentlyHidden
+                            ? hideText
+                            : showText;
+                    }
+
+                    if (isCurrentlyHidden) {
+                        stateSet.add(stateKey);
+                    } else {
+                        stateSet.delete(stateKey);
+                    }
+
+                    return isCurrentlyHidden;
+                }
+
+                // ============================================================
+                // REQUEST RENDERING FUNCTIONS
+                // ============================================================
 
                 // Build query parameters section
                 function buildQueryParamsSection(queryParams) {
@@ -181,7 +517,8 @@
                         "ul",
                         "list-disc list-inside text-sm",
                     );
-                    for (const [key, value] of Object.entries(queryParams)) {
+
+                    Object.entries(queryParams).forEach(([key, value]) => {
                         const item = createElement("li");
                         const strong = createElement(
                             "strong",
@@ -191,13 +528,65 @@
                         item.appendChild(strong);
                         item.appendChild(document.createTextNode(value));
                         queryList.appendChild(item);
-                    }
+                    });
+
                     queryDiv.appendChild(queryList);
                     return queryDiv;
                 }
 
+                // Build expandable/collapsible header value
+                function buildHeaderValue(key, value, requestHash) {
+                    const valueLength = value.length;
+
+                    if (valueLength <= CONSTANTS.HEADER_TRUNCATE_LENGTH) {
+                        const valueSpan = createElement("span", "break-all");
+                        valueSpan.textContent = value;
+                        return valueSpan;
+                    }
+
+                    // Long value - add truncation with expand/collapse
+                    const headerKey = `${requestHash}:${key}`;
+                    const isExpanded = state.expandedHeaders.has(headerKey);
+                    const truncatedValue =
+                        value.substring(0, CONSTANTS.HEADER_TRUNCATE_LENGTH) +
+                        "...";
+
+                    const container = createElement("span");
+                    const valueSpan = createElement("span", "break-all");
+                    valueSpan.textContent = isExpanded ? value : truncatedValue;
+                    valueSpan.dataset.fullValue = value;
+                    valueSpan.dataset.truncatedValue = truncatedValue;
+
+                    const expandBtn = createElement(
+                        "button",
+                        "ml-1 text-xs text-blue-600 dark:text-blue-400 hover:underline",
+                        isExpanded ? "Show less" : "Show full",
+                    );
+
+                    expandBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        const isCurrentlyExpanded =
+                            state.expandedHeaders.has(headerKey);
+
+                        if (isCurrentlyExpanded) {
+                            valueSpan.textContent =
+                                valueSpan.dataset.truncatedValue;
+                            expandBtn.textContent = "Show full";
+                            state.expandedHeaders.delete(headerKey);
+                        } else {
+                            valueSpan.textContent = valueSpan.dataset.fullValue;
+                            expandBtn.textContent = "Show less";
+                            state.expandedHeaders.add(headerKey);
+                        }
+                    });
+
+                    container.appendChild(valueSpan);
+                    container.appendChild(expandBtn);
+                    return container;
+                }
+
                 // Build headers section
-                function buildHeadersSection(headers) {
+                function buildHeadersSection(headers, requestHash) {
                     const headersDiv = createElement("div", "mt-2");
                     const headersTitle = createElement(
                         "h4",
@@ -210,23 +599,127 @@
                         "ul",
                         "list-disc list-inside text-sm",
                     );
-                    for (const [key, value] of Object.entries(headers)) {
-                        const item = createElement("li");
+
+                    Object.entries(headers).forEach(([key, value]) => {
+                        const item = createElement("li", "mb-1");
                         const strong = createElement(
                             "strong",
                             null,
                             `${key}: `,
                         );
                         item.appendChild(strong);
-                        item.appendChild(document.createTextNode(value));
+                        item.appendChild(
+                            buildHeaderValue(key, value, requestHash),
+                        );
                         headersList.appendChild(item);
-                    }
+                    });
+
                     headersDiv.appendChild(headersList);
                     return headersDiv;
                 }
 
+                // Format body content (with optional JSON highlighting)
+                function formatBodyContent(bodyText, isJSON) {
+                    const bodyPre = createElement(
+                        "pre",
+                        "bg-gray-200 dark:bg-gray-600 p-2 rounded-md whitespace-pre-wrap text-xs break-words",
+                    );
+
+                    if (isJSON) {
+                        const formatted = JSON.stringify(
+                            JSON.parse(bodyText),
+                            null,
+                            2,
+                        );
+                        bodyPre.innerHTML = syntaxHighlightJSON(formatted);
+                    } else {
+                        bodyPre.textContent = bodyText;
+                    }
+
+                    return bodyPre;
+                }
+
+                // Build body section for large bodies
+                function buildLargeBodySection(
+                    bodyText,
+                    bodyIsJSON,
+                    requestHash,
+                    uniqueId,
+                ) {
+                    const bodyContainer = createElement("div", "relative");
+                    const isExpanded = state.expandedBodies.has(requestHash);
+
+                    const bodyWrapper = createElement(
+                        "div",
+                        "bg-gray-200 dark:bg-gray-600 rounded-md",
+                    );
+                    bodyWrapper.id = `body-wrapper-${uniqueId}`;
+                    bodyWrapper.style.display = isExpanded ? "block" : "none";
+                    bodyWrapper.style.maxHeight = isExpanded
+                        ? CONSTANTS.BODY_MAX_HEIGHT
+                        : "0";
+                    bodyWrapper.style.overflowY = isExpanded
+                        ? "auto"
+                        : "hidden";
+
+                    const bodyPre = createElement(
+                        "pre",
+                        "p-2 whitespace-pre-wrap text-xs break-words",
+                    );
+                    bodyPre.style.margin = "0";
+
+                    if (bodyIsJSON) {
+                        const formatted = JSON.stringify(
+                            JSON.parse(bodyText),
+                            null,
+                            2,
+                        );
+                        bodyPre.innerHTML = syntaxHighlightJSON(formatted);
+                    } else {
+                        bodyPre.textContent = bodyText;
+                    }
+
+                    bodyWrapper.appendChild(bodyPre);
+                    bodyContainer.appendChild(bodyWrapper);
+
+                    const expandBtn = createElement(
+                        "button",
+                        "mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline",
+                        isExpanded ? "Hide body" : "Show body",
+                    );
+                    expandBtn.id = `body-wrapper-${uniqueId}-btn`;
+
+                    expandBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        const wasHidden = toggleVisibility(
+                            `body-wrapper-${uniqueId}`,
+                            state.expandedBodies,
+                            requestHash,
+                            "Show body",
+                            "Hide body",
+                        );
+
+                        if (wasHidden) {
+                            bodyWrapper.style.maxHeight =
+                                CONSTANTS.BODY_MAX_HEIGHT;
+                            bodyWrapper.style.overflowY = "auto";
+                        } else {
+                            bodyWrapper.style.maxHeight = "0";
+                            bodyWrapper.style.overflowY = "hidden";
+                        }
+                    });
+
+                    bodyContainer.appendChild(expandBtn);
+                    return bodyContainer;
+                }
+
                 // Build body section
-                function buildBodySection(req, requestHash, index) {
+                function buildBodySection(req, requestHash, uniqueId) {
+                    // Skip body section for requests that typically don't have bodies
+                    if (CONSTANTS.METHODS_WITHOUT_BODY.has(req.method)) {
+                        return null;
+                    }
+
                     const bodyDiv = createElement("div", "mt-2");
                     const bodyTitle = createElement(
                         "h4",
@@ -237,10 +730,14 @@
 
                     const bodyText = req.body || "No body";
                     const bodyLength = bodyText.length;
-                    const isBinary = /[\x00-\x08\x0E-\x1F]/.test(bodyText);
+                    const isBinary = isBinaryData(bodyText);
+                    const bodyIsJSON = isJSON(bodyText);
 
-                    if (bodyLength > 1000 || isBinary) {
-                        // Add body info
+                    // Handle large or binary bodies
+                    if (
+                        bodyLength > CONSTANTS.BODY_SIZE_THRESHOLD ||
+                        isBinary
+                    ) {
                         const bodyInfo = createElement(
                             "p",
                             "text-xs text-gray-600 dark:text-gray-400 mb-1",
@@ -251,7 +748,6 @@
                         bodyDiv.appendChild(bodyInfo);
 
                         if (isBinary) {
-                            // Binary data message
                             const binaryMsg = createElement(
                                 "div",
                                 "bg-gray-200 dark:bg-gray-600 p-2 rounded-md text-xs italic",
@@ -259,111 +755,81 @@
                             );
                             bodyDiv.appendChild(binaryMsg);
                         } else {
-                            // Large text with expand/collapse
-                            const bodyContainer = createElement(
-                                "div",
-                                "relative",
+                            bodyDiv.appendChild(
+                                buildLargeBodySection(
+                                    bodyText,
+                                    bodyIsJSON,
+                                    requestHash,
+                                    uniqueId,
+                                ),
                             );
-                            const isExpanded =
-                                state.expandedBodies.has(requestHash);
-
-                            const bodyWrapper = createElement(
-                                "div",
-                                "bg-gray-200 dark:bg-gray-600 rounded-md",
-                            );
-                            bodyWrapper.id = `body-wrapper-${index}`;
-                            bodyWrapper.style.display = isExpanded
-                                ? "block"
-                                : "none";
-                            bodyWrapper.style.maxHeight = isExpanded
-                                ? "24rem"
-                                : "0";
-                            bodyWrapper.style.overflowY = isExpanded
-                                ? "auto"
-                                : "hidden";
-
-                            const bodyPre = createElement(
-                                "pre",
-                                "p-2 whitespace-pre-wrap text-xs break-words",
-                                bodyText,
-                            );
-                            bodyPre.style.margin = "0";
-                            bodyWrapper.appendChild(bodyPre);
-                            bodyContainer.appendChild(bodyWrapper);
-
-                            const expandBtn = createElement(
-                                "button",
-                                "mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline",
-                                isExpanded ? "Hide body" : "Show body",
-                            );
-                            expandBtn.id = `expand-body-${index}`;
-                            expandBtn.addEventListener("click", (e) => {
-                                e.stopPropagation();
-                                const wrapper = document.getElementById(
-                                    `body-wrapper-${index}`,
-                                );
-                                const btn = document.getElementById(
-                                    `expand-body-${index}`,
-                                );
-
-                                const isCurrentlyHidden =
-                                    wrapper.style.display === "none";
-                                wrapper.style.display = isCurrentlyHidden
-                                    ? "block"
-                                    : "none";
-                                wrapper.style.maxHeight = isCurrentlyHidden
-                                    ? "24rem"
-                                    : "0";
-                                wrapper.style.overflowY = isCurrentlyHidden
-                                    ? "auto"
-                                    : "hidden";
-                                btn.textContent = isCurrentlyHidden
-                                    ? "Hide body"
-                                    : "Show body";
-
-                                if (isCurrentlyHidden) {
-                                    state.expandedBodies.add(requestHash);
-                                } else {
-                                    state.expandedBodies.delete(requestHash);
-                                }
-                            });
-
-                            bodyContainer.appendChild(expandBtn);
-                            bodyDiv.appendChild(bodyContainer);
                         }
                     } else {
-                        // Small body - show normally
-                        const bodyPre = createElement(
-                            "pre",
-                            "bg-gray-200 dark:bg-gray-600 p-2 rounded-md whitespace-pre-wrap text-xs break-words",
-                            bodyText,
+                        // Small body - display inline
+                        bodyDiv.appendChild(
+                            formatBodyContent(bodyText, bodyIsJSON),
                         );
-                        bodyDiv.appendChild(bodyPre);
                     }
 
                     return bodyDiv;
                 }
 
-                // Build a single request element
-                function buildRequestElement(req, index) {
+                // Build a complete request element
+                function buildRequestElement(req, index, totalRequests) {
                     const requestHash = getRequestHash(req);
+                    const uniqueId = `req-${Date.now()}-${index}`;
+
+                    // Build display path with query params
+                    let displayPath = req.path;
+                    const queryString = buildQueryString(req.query_params);
+                    if (queryString) {
+                        displayPath = `${req.path}?${queryString}`;
+                    }
+
+                    // Main container
                     const reqElement = createElement(
                         "div",
-                        "border dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 overflow-hidden mb-2",
+                        "border dark:border-gray-600 rounded-md overflow-hidden mb-2 bg-white dark:bg-gray-700",
                     );
+                    reqElement.dataset.requestHash = requestHash;
 
-                    // Header section (collapsible trigger)
+                    // Header section (clickable)
                     const headerSection = createElement(
                         "div",
-                        "p-2 bg-gray-100 dark:bg-gray-600 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-500 flex justify-between items-center",
+                        `p-2 cursor-pointer flex justify-between items-center method-${req.method}`,
                     );
-                    const headerLeft = createElement("div");
+
+                    const headerLeft = createElement(
+                        "div",
+                        "flex items-center gap-2 flex-1 min-w-0",
+                    );
+
+                    // Request number badge
+                    const requestNumber = index;
+                    const numberBadge = createElement(
+                        "span",
+                        "font-bold text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 flex-shrink-0",
+                        `#${requestNumber}`,
+                    );
+                    headerLeft.appendChild(numberBadge);
+
+                    // Method badge
+                    const methodBadge = createElement(
+                        "span",
+                        "font-bold text-xs px-2 py-1 rounded bg-white dark:bg-gray-800 flex-shrink-0",
+                        req.method,
+                    );
+                    headerLeft.appendChild(methodBadge);
+
+                    // Path title
                     const titleEl = createElement(
                         "h3",
-                        "font-semibold text-sm",
-                        `${req.method} ${req.path}`,
+                        "font-semibold text-sm truncate",
+                        displayPath,
                     );
+                    titleEl.title = displayPath;
                     headerLeft.appendChild(titleEl);
+
                     headerSection.appendChild(headerLeft);
 
                     // Expand/collapse indicator
@@ -371,16 +837,20 @@
                         state.collapsedRequests.has(requestHash);
                     const indicator = createElement(
                         "span",
-                        "text-gray-500 font-bold",
+                        "text-gray-700 dark:text-gray-300 font-bold flex-shrink-0 ml-2",
                         isCollapsed ? "▶" : "▼",
                     );
-                    indicator.id = `indicator-${index}`;
+                    indicator.id = `indicator-${uniqueId}`;
                     headerSection.appendChild(indicator);
+
                     reqElement.appendChild(headerSection);
 
                     // Details section
-                    const detailsSection = createElement("div", "p-3");
-                    detailsSection.id = `details-${index}`;
+                    const detailsSection = createElement(
+                        "div",
+                        "p-3 bg-gray-50 dark:bg-gray-800",
+                    );
+                    detailsSection.id = `details-${uniqueId}`;
                     detailsSection.style.display = isCollapsed
                         ? "none"
                         : "block";
@@ -394,18 +864,8 @@
                     const pathCodeEl = createElement(
                         "code",
                         "bg-gray-200 dark:bg-gray-600 p-1 rounded text-xs",
+                        displayPath,
                     );
-                    let fullPath = req.path;
-                    if (
-                        req.query_params &&
-                        Object.keys(req.query_params).length > 0
-                    ) {
-                        const queryString = Object.entries(req.query_params)
-                            .map(([key, value]) => `${key}=${value}`)
-                            .join("&");
-                        fullPath = `${req.path}?${queryString}`;
-                    }
-                    pathCodeEl.textContent = fullPath;
                     pathEl.appendChild(pathCodeEl);
                     detailsSection.appendChild(pathEl);
 
@@ -419,32 +879,37 @@
 
                     // Headers
                     detailsSection.appendChild(
-                        buildHeadersSection(req.headers),
+                        buildHeadersSection(req.headers, requestHash),
                     );
 
                     // Body
-                    detailsSection.appendChild(
-                        buildBodySection(req, requestHash, index),
+                    const bodySection = buildBodySection(
+                        req,
+                        requestHash,
+                        uniqueId,
                     );
+                    if (bodySection) {
+                        detailsSection.appendChild(bodySection);
+                    }
 
                     reqElement.appendChild(detailsSection);
 
-                    // Toggle handler
+                    // Toggle collapse/expand on header click
                     headerSection.addEventListener("click", () => {
                         const details = document.getElementById(
-                            `details-${index}`,
+                            `details-${uniqueId}`,
                         );
-                        const indicator = document.getElementById(
-                            `indicator-${index}`,
+                        const ind = document.getElementById(
+                            `indicator-${uniqueId}`,
                         );
 
                         if (details.style.display === "none") {
                             details.style.display = "block";
-                            indicator.textContent = "▼";
+                            ind.textContent = "▼";
                             state.collapsedRequests.delete(requestHash);
                         } else {
                             details.style.display = "none";
-                            indicator.textContent = "▶";
+                            ind.textContent = "▶";
                             state.collapsedRequests.add(requestHash);
                         }
                     });
@@ -452,19 +917,21 @@
                     return reqElement;
                 }
 
-                // Fetch and display requests
+                // ============================================================
+                // API FUNCTIONS
+                // ============================================================
+
+                // Fetch and display all requests
                 async function fetchAndDisplayRequests() {
                     updatePollingIndicator("loading");
 
                     try {
-                        const response = await fetch(
-                            `/api/requests/${state.bucketName}`,
-                            {
-                                headers: {
-                                    "X-Bucket-Password": state.password,
-                                },
+                        const url = `/api/requests/${state.bucketName}?page=${state.currentPage}&page_size=${state.pageSize}`;
+                        const response = await fetch(url, {
+                            headers: {
+                                "X-Bucket-Password": state.password,
                             },
-                        );
+                        });
 
                         if (!response.ok) {
                             clearInterval(state.pollInterval);
@@ -495,14 +962,23 @@
                             return;
                         }
 
-                        const requests = await response.json();
+                        const data = await response.json();
                         updatePollingIndicator("active");
 
-                        if (requests.length === 0) {
+                        // Update pagination state
+                        state.totalRequests = data.total;
+                        state.totalPages = data.total_pages;
+
+                        // Update pagination UI
+                        updatePaginationUI();
+
+                        if (data.requests.length === 0) {
                             const noRequestsMsg = createElement(
                                 "p",
                                 null,
-                                "No requests captured yet.",
+                                state.totalRequests === 0
+                                    ? "No requests captured yet."
+                                    : "No requests on this page.",
                             );
                             elements.requestsContainer.replaceChildren(
                                 noRequestsMsg,
@@ -510,17 +986,41 @@
                         } else {
                             // Build all request elements
                             const fragment = document.createDocumentFragment();
+                            const requests = data.requests;
+
                             requests.reverse().forEach((req, index) => {
+                                const requestHash = getRequestHash(req);
+
+                                // Collapse new requests by default
+                                if (!state.seenRequests.has(requestHash)) {
+                                    state.collapsedRequests.add(requestHash);
+                                    state.seenRequests.add(requestHash);
+                                }
+
+                                // Calculate global request number
+                                // Requests are reversed (newest first), so:
+                                // - On page 1, index 0 = newest request = totalRequests
+                                // - On page 1, index 1 = second newest = totalRequests - 1
+                                const globalIndex =
+                                    state.totalRequests -
+                                    (state.currentPage - 1) * state.pageSize -
+                                    index;
+
                                 fragment.appendChild(
-                                    buildRequestElement(req, index),
+                                    buildRequestElement(
+                                        req,
+                                        globalIndex,
+                                        state.totalRequests,
+                                    ),
                                 );
                             });
+
                             elements.requestsContainer.replaceChildren(
                                 fragment,
                             );
                         }
                     } catch (error) {
-                        console.error("Error:", error);
+                        console.error("Error fetching requests:", error);
                         updatePollingIndicator("error", "Network error");
 
                         const errorPara = createElement(
@@ -532,7 +1032,56 @@
                     }
                 }
 
-                // Clear all requests
+                // Update pagination UI controls
+                function updatePaginationUI() {
+                    if (state.totalRequests === 0) {
+                        elements.paginationInfo.style.display = "none";
+                        elements.paginationControls.style.display = "none";
+                        return;
+                    }
+
+                    // Show pagination controls
+                    elements.paginationInfo.style.display = "flex";
+                    elements.paginationControls.style.display = "flex";
+
+                    // Update text info
+                    const start = Math.min(
+                        (state.currentPage - 1) * state.pageSize + 1,
+                        state.totalRequests,
+                    );
+                    const end = Math.min(
+                        state.currentPage * state.pageSize,
+                        state.totalRequests,
+                    );
+                    elements.paginationText.textContent = `Showing ${start}-${end} of ${state.totalRequests} requests`;
+                    elements.pageInfo.textContent = `Page ${state.currentPage} of ${state.totalPages}`;
+
+                    // Update button states
+                    elements.firstPageBtn.disabled = state.currentPage === 1;
+                    elements.prevPageBtn.disabled = state.currentPage === 1;
+                    elements.nextPageBtn.disabled =
+                        state.currentPage >= state.totalPages;
+                    elements.lastPageBtn.disabled =
+                        state.currentPage >= state.totalPages;
+                }
+
+                // Pagination navigation functions
+                function goToPage(page) {
+                    if (page < 1 || page > state.totalPages) return;
+                    state.currentPage = page;
+                    fetchAndDisplayRequests();
+                }
+
+                function changePageSize(newSize) {
+                    state.pageSize = Math.min(
+                        Math.max(newSize, 1),
+                        CONSTANTS.MAX_PAGE_SIZE,
+                    );
+                    state.currentPage = 1; // Reset to first page when changing page size
+                    fetchAndDisplayRequests();
+                }
+
+                // Clear all requests in the bucket
                 async function clearRequests() {
                     if (
                         !confirm(
@@ -554,6 +1103,12 @@
                         );
 
                         if (response.ok) {
+                            // Clear local state
+                            state.seenRequests.clear();
+                            state.collapsedRequests.clear();
+                            state.expandedBodies.clear();
+                            state.expandedHeaders.clear();
+
                             fetchAndDisplayRequests();
                         } else {
                             const errorText = await response.text();
@@ -565,7 +1120,7 @@
                     }
                 }
 
-                // Delete bucket
+                // Delete the entire bucket
                 async function deleteBucket() {
                     if (
                         !confirm(
@@ -601,7 +1156,37 @@
                     }
                 }
 
-                // Initialize the application
+                // ============================================================
+                // INITIALIZATION
+                // ============================================================
+
+                function setupPaginationControls() {
+                    // First page button
+                    elements.firstPageBtn.addEventListener("click", () =>
+                        goToPage(1),
+                    );
+
+                    // Previous page button
+                    elements.prevPageBtn.addEventListener("click", () =>
+                        goToPage(state.currentPage - 1),
+                    );
+
+                    // Next page button
+                    elements.nextPageBtn.addEventListener("click", () =>
+                        goToPage(state.currentPage + 1),
+                    );
+
+                    // Last page button
+                    elements.lastPageBtn.addEventListener("click", () =>
+                        goToPage(state.totalPages),
+                    );
+
+                    // Page size selector
+                    elements.pageSizeSelect.addEventListener("change", (e) => {
+                        changePageSize(parseInt(e.target.value, 10));
+                    });
+                }
+
                 function init() {
                     // Cache DOM elements
                     elements.bucketNameDisplay = document.getElementById(
@@ -622,6 +1207,26 @@
                         document.getElementById("copy-url-btn");
 
                     // Get bucket info from URL
+                    // Cache DOM elements
+                    elements.paginationInfo =
+                        document.getElementById("pagination-info");
+                    elements.paginationText =
+                        document.getElementById("pagination-text");
+                    elements.paginationControls = document.getElementById(
+                        "pagination-controls",
+                    );
+                    elements.pageInfo = document.getElementById("page-info");
+                    elements.firstPageBtn =
+                        document.getElementById("first-page-btn");
+                    elements.prevPageBtn =
+                        document.getElementById("prev-page-btn");
+                    elements.nextPageBtn =
+                        document.getElementById("next-page-btn");
+                    elements.lastPageBtn =
+                        document.getElementById("last-page-btn");
+                    elements.pageSizeSelect =
+                        document.getElementById("page-size-select");
+
                     const urlParams = new URLSearchParams(
                         window.location.search,
                     );
@@ -639,7 +1244,7 @@
                         return;
                     }
 
-                    // Set bucket name and URL
+                    // Set bucket name and capture URL
                     elements.bucketNameDisplay.textContent = state.bucketName;
                     const captureUrlText = `${window.location.origin}/${state.bucketName}`;
                     elements.captureUrl.textContent = captureUrlText;
@@ -670,11 +1275,14 @@
                         deleteBucket,
                     );
 
-                    // Start polling
+                    // Setup pagination controls
+                    setupPaginationControls();
+
+                    // Start polling for requests
                     fetchAndDisplayRequests();
                     state.pollInterval = setInterval(
                         fetchAndDisplayRequests,
-                        3000,
+                        CONSTANTS.POLL_INTERVAL_MS,
                     );
                 }
 

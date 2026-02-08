@@ -19,5 +19,34 @@ You can interact with a demo instance of this application at:
 - `docker build -t request-catcher .`
 - `docker run -p 9090:9090 request-catcher`
 
+## Testing
+
+This project includes comprehensive test coverage:
+
+### Integration Tests (Automated)
+33 Rust integration tests covering backend functionality:
+```bash
+# Run all integration tests
+cargo test
+
+# Run specific test
+cargo test test_create_bucket
+
+# Run with output
+cargo test -- --nocapture
+```
+
+### UI Tests (Manual/Semi-Automated)
+```bash
+# Start the server
+cargo run
+
+# In another terminal, generate test data
+cd tests/ui
+./generate_test_data.sh
+
+# Open the provided URL in your browser to verify
+```
+
 ## AI Disclaimer
 Most of this application was "vibe-coded" as a personal exploration project. I do not personally know Rust, but I wanted to see what I could develop with the assistance of AI.
