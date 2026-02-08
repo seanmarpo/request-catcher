@@ -1,2 +1,33 @@
-fly.toml
+# Version control
 .git/
+.gitignore
+
+# Build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+README.md
+LICENSE
+
+# CI/CD
+.github/
+
+# Deployment
+fly.toml
+Dockerfile
+.dockerignore
+
+# Tests
+tests/
+
+# Misc
+*.log
