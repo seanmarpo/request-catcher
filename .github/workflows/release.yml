@@ -56,11 +56,11 @@ jobs:
             artifact_name: request_catcher
             asset_name: request-catcher-linux-arm64
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             artifact_name: request_catcher
             asset_name: request-catcher-macos-amd64
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             artifact_name: request_catcher
             asset_name: request-catcher-macos-arm64
 
