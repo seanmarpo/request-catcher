@@ -1,6 +1,6 @@
 [package]
 name = "request_catcher"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 
 [lib]
@@ -15,8 +15,8 @@ actix-files = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-subtle = "2.5"
-dashmap = "6.0"
+subtle = "2.6"
+dashmap = "6.1"
 
 [dev-dependencies]
 actix-rt = "2"
