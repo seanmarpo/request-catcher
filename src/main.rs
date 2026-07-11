@@ -3,7 +3,7 @@ use actix_files::Files;
 use actix_web::{web, App, HttpResponse, HttpServer};
 use request_catcher::{
     capture_request, clear_bucket_requests, create_bucket, delete_bucket, get_bucket_requests,
-    list_buckets, AppState,
+    list_buckets, get_version, AppState,
 };
 use std::env;
 use tracing::info;
@@ -42,6 +42,7 @@ async fn main() -> std::io::Result<()> {
                             .allow_any_header(),
                     )
                     .route("/buckets", web::get().to(list_buckets))
+                    .route("/version", web::get().to(get_version))
                     .route(
                         "/clear/{bucket_name}",
                         web::post().to(clear_bucket_requests),

@@ -351,3 +351,8 @@ pub async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
     info!(count = names.len(), "Served list of buckets");
     HttpResponse::Ok().json(names)
 }
+
+pub async fn get_version() -> impl Responder {
+    HttpResponse::Ok().body(env!("CARGO_PKG_VERSION"))
+}
+
