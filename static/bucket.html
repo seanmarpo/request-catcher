@@ -188,6 +188,32 @@
                             Copy
                         </button>
                     </p>
+                    <p
+                        id="subdomain-url-row"
+                        class="text-sm text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-2"
+                        style="display: none"
+                    >
+                        Or any path on:
+                        <code
+                            id="subdomain-url"
+                            class="bg-gray-200 dark:bg-gray-700 p-1 rounded"
+                        ></code>
+                        <button
+                            id="copy-subdomain-btn"
+                            class="bg-gray-500 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded-md"
+                            title="Copy subdomain URL"
+                        >
+                            Copy
+                        </button>
+                    </p>
+                    <p
+                        id="subdomain-unavailable"
+                        class="text-xs text-gray-500 dark:text-gray-400 mt-2"
+                        style="display: none"
+                    >
+                        Subdomain capture needs a bucket name with only
+                        lowercase letters, digits, and hyphens.
+                    </p>
                 </div>
                 <div class="flex space-x-2">
                     <button
@@ -215,6 +241,71 @@
                     </button>
                 </div>
             </div>
+
+            <details
+                id="response-panel"
+                class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md mb-6"
+            >
+                <summary class="text-xl font-semibold cursor-pointer">
+                    Response
+                    <span
+                        id="response-summary"
+                        class="text-sm font-normal text-gray-500 dark:text-gray-400"
+                    ></span>
+                </summary>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                    What this bucket sends back to whoever hits the capture
+                    URL. A redirect tests whether the target follows redirects
+                    to internal addresses; a unique body confirms full-read
+                    SSRF if it shows up in the target's output.
+                </p>
+                <div class="mt-4 space-y-3">
+                    <label class="block text-sm font-medium"
+                        >Status
+                        <input
+                            id="response-status"
+                            type="number"
+                            min="200"
+                            max="599"
+                            class="mt-1 p-2 border dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-gray-100 block w-32"
+                    /></label>
+                    <label class="block text-sm font-medium"
+                        >Headers
+                        <span
+                            class="font-normal text-gray-500 dark:text-gray-400"
+                            >(one "Name: value" per line)</span
+                        >
+                        <textarea
+                            id="response-headers"
+                            rows="3"
+                            class="mt-1 p-2 border dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-gray-100 block w-full font-mono text-xs"
+                        ></textarea>
+                    </label>
+                    <label class="block text-sm font-medium"
+                        >Body
+                        <textarea
+                            id="response-body"
+                            rows="4"
+                            class="mt-1 p-2 border dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-gray-100 block w-full font-mono text-xs"
+                        ></textarea>
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <button
+                            id="response-save-btn"
+                            class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-md text-sm"
+                        >
+                            Save
+                        </button>
+                        <button id="response-redirect-btn" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded-md text-sm">
+                            Set redirect…
+                        </button>
+                        <button id="response-reset-btn" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded-md text-sm">
+                            Reset to default
+                        </button>
+                        <span id="response-msg" class="text-sm"></span>
+                    </div>
+                </div>
+            </details>
 
             <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
                 <div class="flex justify-between items-center mb-4">
@@ -367,6 +458,70 @@
                 // API path for a bucket action, with the name safely encoded
                 function bucketApiUrl(action) {
                     return `/api/${action}/${encodeURIComponent(state.bucketName)}`;
+                }
+
+                function authHeaders(extra = {}) {
+                    return { "X-Bucket-Password": state.password, ...extra };
+                }
+
+                // Quote a string for a POSIX shell
+                function shellQuote(str) {
+                    return `'${str.replace(/'/g, "'\\''")}'`;
+                }
+
+                function bodyFileName(req) {
+                    return `${state.bucketName}-${req.id}.bin`;
+                }
+
+                // Rebuild a captured request as a curl command
+                function buildCurl(req) {
+                    const hostHeader = req.headers.find(([k]) => k === "host");
+                    const host = hostHeader ? hostHeader[1] : window.location.host;
+                    const query = req.query ? `?${req.query}` : "";
+                    const parts = ["curl"];
+
+                    if (req.method === "HEAD") {
+                        parts.push("--head");
+                    } else if (req.method !== "GET" || req.body_size > 0) {
+                        parts.push(`-X ${req.method}`);
+                    }
+                    parts.push(
+                        shellQuote(`${window.location.protocol}//${host}${req.path}${query}`),
+                    );
+                    // curl derives Host and Content-Length itself
+                    req.headers
+                        .filter(([k]) => k !== "host" && k !== "content-length")
+                        .forEach(([k, v]) => parts.push(`-H ${shellQuote(`${k}: ${v}`)}`));
+                    if (req.body_size > 0) {
+                        parts.push(
+                            req.body === null
+                                ? `--data-binary @${shellQuote(bodyFileName(req))}`
+                                : `--data-raw ${shellQuote(req.body)}`,
+                        );
+                    }
+                    return parts.join(" \\\n  ");
+                }
+
+                // Download a request's exact body bytes
+                async function downloadBody(req) {
+                    try {
+                        const response = await fetch(
+                            `${bucketApiUrl("body")}/${req.id}`,
+                            { headers: authHeaders() },
+                        );
+                        if (!response.ok) {
+                            throw new Error(await response.text());
+                        }
+                        const url = URL.createObjectURL(await response.blob());
+                        const link = document.createElement("a");
+                        link.href = url;
+                        link.download = bodyFileName(req);
+                        link.click();
+                        URL.revokeObjectURL(url);
+                    } catch (error) {
+                        console.error("Error downloading body:", error);
+                        alert(`Failed to download body: ${error.message}`);
+                    }
                 }
 
                 // Copy text to clipboard with visual feedback
@@ -719,8 +874,11 @@
 
                 // Build body section
                 function buildBodySection(req, requestId, uniqueId) {
-                    // Skip body section for requests that typically don't have bodies
-                    if (CONSTANTS.METHODS_WITHOUT_BODY.has(req.method)) {
+                    // Skip the empty body section for methods that rarely have one
+                    if (
+                        req.body_size === 0 &&
+                        CONSTANTS.METHODS_WITHOUT_BODY.has(req.method)
+                    ) {
                         return null;
                     }
 
@@ -732,9 +890,25 @@
                     );
                     bodyDiv.appendChild(bodyTitle);
 
-                    const bodyText = req.body || "No body";
-                    const bodyLength = bodyText.length;
-                    const isBinary = isBinaryData(bodyText);
+                    if (req.body_size > 0) {
+                        const downloadBtn = createElement(
+                            "button",
+                            "ml-2 text-xs font-normal text-blue-600 dark:text-blue-400 hover:underline",
+                            "Download",
+                        );
+                        downloadBtn.addEventListener("click", (e) => {
+                            e.stopPropagation();
+                            downloadBody(req);
+                        });
+                        bodyTitle.appendChild(downloadBtn);
+                    }
+
+                    // body is null when it isn't valid UTF-8
+                    const bodyText =
+                        req.body_size === 0 ? "No body" : (req.body ?? "");
+                    const bodyLength = req.body_size;
+                    const isBinary =
+                        req.body === null || isBinaryData(bodyText);
                     const bodyIsJSON = isJSON(bodyText);
 
                     // Handle large or binary bodies
@@ -746,8 +920,8 @@
                             "p",
                             "text-xs text-gray-600 dark:text-gray-400 mb-1",
                             isBinary
-                                ? `Binary data (${bodyLength.toLocaleString()} bytes) - likely a file upload`
-                                : `Large body (${bodyLength.toLocaleString()} characters)`,
+                                ? `Binary data (${bodyLength.toLocaleString()} bytes) - use Download for the exact bytes`
+                                : `Large body (${bodyLength.toLocaleString()} bytes)`,
                         );
                         bodyDiv.appendChild(bodyInfo);
 
@@ -873,9 +1047,20 @@
                         createElement(
                             "p",
                             "text-sm text-gray-600 dark:text-gray-300 mt-1",
-                            `Source IP: ${req.remote_addr || "unknown"} · Received: ${new Date(req.timestamp).toLocaleString()}`,
+                            `Source IP: ${req.remote_addr || "unknown"} · ${req.http_version} · Received: ${new Date(req.timestamp).toLocaleString()} (${new Date(req.timestamp).toISOString()})`,
                         ),
                     );
+
+                    const curlBtn = createElement(
+                        "button",
+                        "mt-2 bg-gray-500 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded-md",
+                        "Copy as curl",
+                    );
+                    curlBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        copyToClipboard(buildCurl(req), curlBtn, "Copy as curl");
+                    });
+                    detailsSection.appendChild(curlBtn);
 
                     // Query parameters
                     const querySection = buildQueryParamsSection(req.query);
@@ -934,9 +1119,7 @@
                     try {
                         const url = `${bucketApiUrl("requests")}?page=${state.currentPage}&page_size=${state.pageSize}`;
                         const response = await fetch(url, {
-                            headers: {
-                                "X-Bucket-Password": state.password,
-                            },
+                            headers: authHeaders(),
                         });
 
                         if (!response.ok) {
@@ -1099,9 +1282,7 @@
                             bucketApiUrl("clear"),
                             {
                                 method: "POST",
-                                headers: {
-                                    "X-Bucket-Password": state.password,
-                                },
+                                headers: authHeaders(),
                             },
                         );
 
@@ -1139,9 +1320,7 @@
                             bucketApiUrl("delete"),
                             {
                                 method: "DELETE",
-                                headers: {
-                                    "X-Bucket-Password": state.password,
-                                },
+                                headers: authHeaders(),
                             },
                         );
 
@@ -1158,6 +1337,113 @@
                         console.error("Error deleting bucket:", error);
                         alert("An error occurred while deleting the bucket.");
                     }
+                }
+
+                // ============================================================
+                // CUSTOM RESPONSE
+                // ============================================================
+
+                function showResponseMsg(text, isError) {
+                    elements.responseMsg.textContent = text;
+                    elements.responseMsg.className = isError
+                        ? "text-sm text-red-500"
+                        : "text-sm text-green-600 dark:text-green-400";
+                }
+
+                function fillResponseForm(response) {
+                    elements.responseStatus.value = response.status;
+                    elements.responseHeaders.value = response.headers
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join("\n");
+                    elements.responseBody.value = response.body;
+                    const location = response.headers.find(
+                        ([k]) => k.toLowerCase() === "location",
+                    );
+                    elements.responseSummary.textContent = `— ${response.status}${location ? ` → ${location[1]}` : ""}`;
+                }
+
+                // "Name: value" lines -> [name, value] pairs
+                function parseHeaderLines(text) {
+                    return text
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .map((line) => {
+                            const i = line.indexOf(":");
+                            if (i <= 0) {
+                                throw new Error(`Invalid header line: ${line}`);
+                            }
+                            return [line.slice(0, i).trim(), line.slice(i + 1).trim()];
+                        });
+                }
+
+                async function loadResponse() {
+                    try {
+                        const response = await fetch(bucketApiUrl("response"), {
+                            headers: authHeaders(),
+                        });
+                        if (response.ok) {
+                            fillResponseForm(await response.json());
+                        }
+                    } catch (error) {
+                        console.error("Error loading response:", error);
+                    }
+                }
+
+                async function saveResponse() {
+                    try {
+                        const custom = {
+                            status: parseInt(elements.responseStatus.value, 10),
+                            headers: parseHeaderLines(elements.responseHeaders.value),
+                            body: elements.responseBody.value,
+                        };
+                        const response = await fetch(bucketApiUrl("response"), {
+                            method: "PUT",
+                            headers: authHeaders({ "Content-Type": "application/json" }),
+                            body: JSON.stringify(custom),
+                        });
+                        if (!response.ok) {
+                            throw new Error(await response.text());
+                        }
+                        fillResponseForm(custom);
+                        showResponseMsg("Saved", false);
+                    } catch (error) {
+                        showResponseMsg(error.message, true);
+                    }
+                }
+
+                async function resetResponse() {
+                    try {
+                        const response = await fetch(bucketApiUrl("response"), {
+                            method: "DELETE",
+                            headers: authHeaders(),
+                        });
+                        if (!response.ok) {
+                            throw new Error(await response.text());
+                        }
+                        await loadResponse();
+                        showResponseMsg("Reset to default", false);
+                    } catch (error) {
+                        showResponseMsg(error.message, true);
+                    }
+                }
+
+                function setRedirect() {
+                    const url = prompt(
+                        "Redirect captured requests to:",
+                        "http://169.254.169.254/latest/meta-data/",
+                    );
+                    if (!url) return;
+                    let headers = [];
+                    try {
+                        headers = parseHeaderLines(elements.responseHeaders.value);
+                    } catch (e) {
+                        // Replace unparseable headers with just the redirect
+                    }
+                    headers = headers.filter(([k]) => k.toLowerCase() !== "location");
+                    headers.push(["Location", url]);
+                    fillResponseForm({ status: 302, headers, body: "" });
+                    saveResponse();
                 }
 
                 // ============================================================
@@ -1228,6 +1514,15 @@
                         document.getElementById("last-page-btn");
                     elements.pageSizeSelect =
                         document.getElementById("page-size-select");
+                    elements.responseStatus =
+                        document.getElementById("response-status");
+                    elements.responseHeaders =
+                        document.getElementById("response-headers");
+                    elements.responseBody =
+                        document.getElementById("response-body");
+                    elements.responseSummary =
+                        document.getElementById("response-summary");
+                    elements.responseMsg = document.getElementById("response-msg");
 
                     // Bucket info lives in the URL fragment (#name=..&password=..),
                     // which browsers never send to the server. Old ?query links
@@ -1284,6 +1579,18 @@
                     // Setup pagination controls
                     setupPaginationControls();
 
+                    // Custom response controls
+                    document
+                        .getElementById("response-save-btn")
+                        .addEventListener("click", saveResponse);
+                    document
+                        .getElementById("response-reset-btn")
+                        .addEventListener("click", resetResponse);
+                    document
+                        .getElementById("response-redirect-btn")
+                        .addEventListener("click", setRedirect);
+                    loadResponse();
+
                     // Start polling for requests
                     fetchAndDisplayRequests();
                     state.pollInterval = setInterval(
@@ -1291,23 +1598,45 @@
                         CONSTANTS.POLL_INTERVAL_MS,
                     );
 
-                    // Load version
-                    fetchVersion();
+                    // Load version and server settings
+                    fetchInfo();
                 }
 
-                async function fetchVersion() {
+                async function fetchInfo() {
                     try {
-                        const response = await fetch("/api/version");
-                        if (response.ok) {
-                            const version = await response.text();
-                            const versionEl = document.getElementById("app-version");
-                            if (versionEl) {
-                                versionEl.textContent = version;
-                            }
+                        const response = await fetch("/api/info");
+                        if (!response.ok) return;
+                        const info = await response.json();
+                        document.getElementById("app-version").textContent =
+                            info.version;
+
+                        if (info.bucket_domain) {
+                            showSubdomainUrl(info.bucket_domain);
                         }
                     } catch (error) {
-                        console.error("Error fetching version:", error);
+                        console.error("Error fetching server info:", error);
                     }
+                }
+
+                function showSubdomainUrl(domain) {
+                    // Hostnames are lowercase and can't contain underscores
+                    if (!/^[a-z0-9-]+$/.test(state.bucketName)) {
+                        document.getElementById(
+                            "subdomain-unavailable",
+                        ).style.display = "block";
+                        return;
+                    }
+                    const port = window.location.port
+                        ? `:${window.location.port}`
+                        : "";
+                    const url = `${window.location.protocol}//${state.bucketName}.${domain}${port}/`;
+                    const button = document.getElementById("copy-subdomain-btn");
+                    document.getElementById("subdomain-url").textContent = url;
+                    document.getElementById("subdomain-url-row").style.display =
+                        "flex";
+                    button.addEventListener("click", () =>
+                        copyToClipboard(url, button, "Copy"),
+                    );
                 }
 
                 // Start when DOM is ready

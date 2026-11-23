@@ -61,6 +61,12 @@
                         placeholder="Enter a password for the new bucket"
                         class="w-full p-2 border dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
                     />
+                    <input
+                        type="password"
+                        id="createToken"
+                        placeholder="Creation token (required by this server)"
+                        class="hidden w-full p-2 border dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+                    />
                     <button
                         id="createBucketBtn"
                         class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
@@ -96,11 +102,14 @@
             (() => {
                 "use strict";
 
+                const state = { createTokenRequired: false };
+
                 // DOM element cache
                 const elements = {
                     createBucketBtn: null,
                     bucketNameInput: null,
                     bucketPasswordInput: null,
+                    createTokenInput: null,
                     bucketsList: null,
                     errorMessage: null,
                     errorText: null,
@@ -142,12 +151,22 @@
                         return;
                     }
 
+                    const headers = { "Content-Type": "application/json" };
+                    if (state.createTokenRequired) {
+                        const token = elements.createTokenInput.value;
+                        if (!token) {
+                            showError("This server requires a creation token.");
+                            return;
+                        }
+                        headers["X-Create-Token"] = token;
+                    }
+
                     try {
                         const response = await fetch(
                             `/api/create/${encodeURIComponent(bucketName)}`,
                             {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers,
                                 body: JSON.stringify({ password }),
                             },
                         );
@@ -239,19 +258,21 @@
                     }
                 }
 
-                // Fetch and display version
-                async function fetchVersion() {
+                // Fetch version and server settings
+                async function fetchInfo() {
                     try {
-                        const response = await fetch("/api/version");
-                        if (response.ok) {
-                            const version = await response.text();
-                            const versionEl = document.getElementById("app-version");
-                            if (versionEl) {
-                                versionEl.textContent = version;
-                            }
-                        }
+                        const response = await fetch("/api/info");
+                        if (!response.ok) return;
+                        const info = await response.json();
+                        document.getElementById("app-version").textContent =
+                            info.version;
+                        state.createTokenRequired = info.create_token_required;
+                        elements.createTokenInput.classList.toggle(
+                            "hidden",
+                            !info.create_token_required,
+                        );
                     } catch (error) {
-                        console.error("Error fetching version:", error);
+                        console.error("Error fetching server info:", error);
                     }
                 }
 
@@ -264,6 +285,8 @@
                         document.getElementById("bucketName");
                     elements.bucketPasswordInput =
                         document.getElementById("bucketPassword");
+                    elements.createTokenInput =
+                        document.getElementById("createToken");
                     elements.bucketsList =
                         document.getElementById("bucketsList");
                     elements.errorMessage =
@@ -283,12 +306,16 @@
                         "keypress",
                         handleEnterKey,
                     );
+                    elements.createTokenInput.addEventListener(
+                        "keypress",
+                        handleEnterKey,
+                    );
 
                     // Load existing buckets
                     fetchAndRenderBuckets();
 
-                    // Load version
-                    fetchVersion();
+                    // Load version and server settings
+                    fetchInfo();
                 }
 
                 // Start when DOM is ready

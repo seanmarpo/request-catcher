@@ -1,5 +1,5 @@
 use actix_web::{test, web, App};
-use request_catcher::{routes, AppState, CreateBucketPayload};
+use request_catcher::{routes, AppState, Config, CreateBucketPayload};
 use serde_json::{json, Value};
 
 const PASSWORD_HEADER: &str = "X-Bucket-Password";
@@ -15,8 +15,23 @@ fn create_test_app() -> App<
         InitError = (),
     >,
 > {
+    app_with(Config::default())
+}
+
+/// Builds the app with custom settings.
+fn app_with(
+    config: Config,
+) -> App<
+    impl actix_web::dev::ServiceFactory<
+        actix_web::dev::ServiceRequest,
+        Config = (),
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        InitError = (),
+    >,
+> {
     App::new()
-        .app_data(web::Data::new(AppState::default()))
+        .app_data(web::Data::new(AppState::new(config)))
         .configure(routes)
 }
 
@@ -1000,8 +1015,8 @@ async fn test_create_bucket_with_very_long_name() {
         password: TEST_PASSWORD.to_string(),
     };
 
-    // Create a name longer than 100 characters
-    let long_name = "a".repeat(101);
+    // Longer than a DNS label (63), so it couldn't be used as a subdomain
+    let long_name = "a".repeat(64);
 
     let req = test::TestRequest::post()
         .uri(&format!("/api/create/{}", long_name))
@@ -1336,12 +1351,11 @@ async fn test_remote_addr_uses_peer_address_by_default() {
 
 #[actix_web::test]
 async fn test_remote_addr_uses_configured_header() {
-    let state = AppState {
+    let app = test::init_service(app_with(Config {
         client_ip_header: Some("fly-client-ip".parse().unwrap()),
         ..Default::default()
-    };
-    let app =
-        test::init_service(App::new().app_data(web::Data::new(state)).configure(routes)).await;
+    }))
+    .await;
     test::call_service(&app, create_req("ip").to_request())
         .await
         .status();
@@ -1418,4 +1432,308 @@ async fn test_version_endpoint() {
     let req = test::TestRequest::get().uri("/api/version").to_request();
     let body = test::call_and_read_body(&app, req).await;
     assert_eq!(body, env!("CARGO_PKG_VERSION"));
+}
+
+// ---------------------------------------------------------------------------
+// Custom responses
+// ---------------------------------------------------------------------------
+
+fn set_response_req(name: &str, response: Value) -> test::TestRequest {
+    test::TestRequest::put()
+        .uri(&format!("/api/response/{name}"))
+        .insert_header((PASSWORD_HEADER, TEST_PASSWORD))
+        .set_json(response)
+}
+
+#[actix_web::test]
+async fn test_default_response_is_unchanged() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("r").to_request()).await;
+
+    let resp = test::call_service(&app, test::TestRequest::get().uri("/r").to_request()).await;
+    assert_eq!(resp.status(), 200);
+    assert!(resp
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("sandbox"));
+    assert_eq!(test::read_body(resp).await, "Request captured");
+}
+
+#[actix_web::test]
+async fn test_custom_redirect_response() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("r").to_request()).await;
+
+    let custom = json!({
+        "status": 302,
+        "headers": [["Location", "http://169.254.169.254/latest/meta-data/"], ["X-Extra", "a"], ["X-Extra", "b"]],
+        "body": "",
+    });
+    let resp = test::call_service(&app, set_response_req("r", custom.clone()).to_request()).await;
+    assert_eq!(resp.status(), 200);
+
+    // Round-trips through GET
+    let got: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/response/r").to_request()).await;
+    assert_eq!(got, custom);
+
+    // Capture still records the request, and returns the custom response
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get().uri("/r/anything").to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 302);
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        "http://169.254.169.254/latest/meta-data/"
+    );
+    assert_eq!(resp.headers().get_all("x-extra").count(), 2);
+    let list: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/requests/r").to_request()).await;
+    assert_eq!(list["total"], 1);
+
+    // Reset restores the default
+    let req = test::TestRequest::delete()
+        .uri("/api/response/r")
+        .insert_header((PASSWORD_HEADER, TEST_PASSWORD))
+        .to_request();
+    test::call_service(&app, req).await;
+    let resp = test::call_service(&app, test::TestRequest::get().uri("/r").to_request()).await;
+    assert_eq!(resp.status(), 200);
+}
+
+#[actix_web::test]
+async fn test_custom_response_validation() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("r").to_request()).await;
+
+    for bad in [
+        json!({"status": 101}),
+        json!({"status": 600}),
+        json!({"status": 200, "headers": [["Bad Header", "x"]]}),
+        json!({"status": 200, "headers": [["X-Ok", "line\nbreak"]]}),
+        json!({"status": 200, "headers": [["Content-Length", "5"]]}),
+    ] {
+        let resp = test::call_service(&app, set_response_req("r", bad.clone()).to_request()).await;
+        assert_eq!(resp.status(), 400, "{bad}");
+    }
+}
+
+#[actix_web::test]
+async fn test_custom_response_requires_password() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("r").to_request()).await;
+    let req = test::TestRequest::put()
+        .uri("/api/response/r")
+        .insert_header((PASSWORD_HEADER, "wrong"))
+        .set_json(json!({"status": 500}))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 401);
+}
+
+// ---------------------------------------------------------------------------
+// Host-based buckets
+// ---------------------------------------------------------------------------
+
+fn domain_config() -> Config {
+    Config {
+        bucket_domain: Some("catcher.test".to_owned()),
+        ..Default::default()
+    }
+}
+
+#[actix_web::test]
+async fn test_capture_by_subdomain() {
+    let app = test::init_service(app_with(domain_config())).await;
+    test::call_service(&app, create_req("sub").to_request()).await;
+
+    // Every path on the subdomain is captured, even ones that look like routes
+    for path in ["/", "/latest/meta-data", "/api/buckets", "/ui/"] {
+        let req = test::TestRequest::get()
+            .uri(path)
+            .insert_header(("Host", "SUB.catcher.test:8080"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200, "{path}");
+        assert_eq!(test::read_body(resp).await, "Request captured", "{path}");
+    }
+
+    let list: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/requests/sub").to_request()).await;
+    assert_eq!(list["total"], 4);
+    assert_eq!(list["requests"][0]["path"], "/ui/");
+}
+
+#[actix_web::test]
+async fn test_subdomain_routing_leaves_other_hosts_alone() {
+    let app = test::init_service(app_with(domain_config())).await;
+    test::call_service(&app, create_req("sub").to_request()).await;
+
+    // The bare domain serves the API and UI as normal
+    let req = test::TestRequest::get()
+        .uri("/api/buckets")
+        .insert_header(("Host", "catcher.test"))
+        .to_request();
+    let names: Value = test::call_and_read_body_json(&app, req).await;
+    assert_eq!(names, json!(["sub"]));
+
+    // Nested subdomains and unrelated hosts don't map to buckets
+    for host in ["a.sub.catcher.test", "sub.other.test", "subcatcher.test"] {
+        let req = test::TestRequest::get()
+            .uri("/sub/x")
+            .insert_header(("Host", host))
+            .to_request();
+        assert_eq!(test::call_service(&app, req).await.status(), 200, "{host}");
+    }
+    // ...those fell back to path-based capture into "sub"
+    let list: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/requests/sub").to_request()).await;
+    assert_eq!(list["total"], 3);
+
+    // Unknown subdomain bucket
+    let req = test::TestRequest::get()
+        .uri("/")
+        .insert_header(("Host", "nope.catcher.test"))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_subdomain_ignored_when_not_configured() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("sub").to_request()).await;
+    let req = test::TestRequest::get()
+        .uri("/api/buckets")
+        .insert_header(("Host", "sub.catcher.test"))
+        .to_request();
+    let names: Value = test::call_and_read_body_json(&app, req).await;
+    assert_eq!(names, json!(["sub"]));
+}
+
+// ---------------------------------------------------------------------------
+// Binary bodies, HTTP version
+// ---------------------------------------------------------------------------
+
+#[actix_web::test]
+async fn test_binary_body_preserved_and_downloadable() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("bin").to_request()).await;
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x00, 0xff, 0xfe, 0x01];
+    let req = test::TestRequest::post()
+        .uri("/bin/upload")
+        .set_payload(bytes.clone())
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let list: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/requests/bin").to_request()).await;
+    let captured = &list["requests"][0];
+    assert_eq!(captured["body"], Value::Null);
+    assert_eq!(captured["body_size"], bytes.len());
+    assert_eq!(captured["http_version"], "HTTP/1.1");
+    let id = captured["id"].as_u64().unwrap();
+
+    let resp =
+        test::call_service(&app, fetch_req(&format!("/api/body/bin/{id}")).to_request()).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        resp.headers().get("content-disposition").unwrap(),
+        &format!("attachment; filename=\"bin-{id}.bin\"")
+    );
+    assert_eq!(test::read_body(resp).await.to_vec(), bytes);
+
+    // Unknown id, wrong password
+    let resp = test::call_service(&app, fetch_req("/api/body/bin/999").to_request()).await;
+    assert_eq!(resp.status(), 404);
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/body/bin/{id}"))
+        .insert_header((PASSWORD_HEADER, "x"))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 401);
+}
+
+// ---------------------------------------------------------------------------
+// Create token, body size limit, info
+// ---------------------------------------------------------------------------
+
+#[actix_web::test]
+async fn test_create_token_required_when_configured() {
+    let app = test::init_service(app_with(Config {
+        create_token: Some("s3cret".to_owned()),
+        ..Default::default()
+    }))
+    .await;
+
+    assert_eq!(
+        test::call_service(&app, create_req("t").to_request())
+            .await
+            .status(),
+        401
+    );
+    let req = create_req("t")
+        .insert_header(("X-Create-Token", "wrong"))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 401);
+    let req = create_req("t")
+        .insert_header(("X-Create-Token", "s3cret"))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+
+    // Capturing and reading don't need the token
+    let resp = test::call_service(&app, test::TestRequest::get().uri("/t").to_request()).await;
+    assert_eq!(resp.status(), 200);
+    let info: Value =
+        test::call_and_read_body_json(&app, test::TestRequest::get().uri("/api/info").to_request())
+            .await;
+    assert_eq!(info["create_token_required"], true);
+}
+
+#[actix_web::test]
+async fn test_max_body_size_configurable() {
+    let app = test::init_service(app_with(Config {
+        max_body_size: 10,
+        ..Default::default()
+    }))
+    .await;
+    test::call_service(&app, create_req("small").to_request()).await;
+
+    let req = test::TestRequest::post()
+        .uri("/small")
+        .set_payload("0123456789")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+    let req = test::TestRequest::post()
+        .uri("/small")
+        .set_payload("0123456789!")
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 413);
+
+    let list: Value =
+        test::call_and_read_body_json(&app, fetch_req("/api/requests/small").to_request()).await;
+    assert_eq!(list["total"], 1);
+}
+
+#[actix_web::test]
+async fn test_info_endpoint_defaults() {
+    let app = test::init_service(create_test_app()).await;
+    let info: Value =
+        test::call_and_read_body_json(&app, test::TestRequest::get().uri("/api/info").to_request())
+            .await;
+    assert_eq!(
+        info,
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "create_token_required": false,
+            "bucket_domain": null,
+            "max_body_size": 10 * 1024 * 1024,
+        })
+    );
 }
