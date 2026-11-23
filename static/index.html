@@ -117,7 +117,8 @@
 
                 // Utility: Navigate to bucket page
                 function navigateToBucket(bucketName, password) {
-                    const url = `/ui/bucket.html?name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
+                    // Fragment, not query string: browsers never send it to the server
+                    const url = `/ui/bucket.html#name=${encodeURIComponent(bucketName)}&password=${encodeURIComponent(password)}`;
                     window.location.href = url;
                 }
 
@@ -132,7 +133,7 @@
                 // Create a new bucket
                 async function createBucket() {
                     const bucketName = elements.bucketNameInput.value.trim();
-                    const password = elements.bucketPasswordInput.value.trim();
+                    const password = elements.bucketPasswordInput.value;
 
                     if (!bucketName || !password) {
                         showError(
@@ -143,7 +144,7 @@
 
                     try {
                         const response = await fetch(
-                            `/api/create/${bucketName}`,
+                            `/api/create/${encodeURIComponent(bucketName)}`,
                             {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
@@ -180,7 +181,7 @@
                             `Enter password for bucket "${bucketName}":`,
                         );
 
-                        if (password !== null && password.trim() !== "") {
+                        if (password) {
                             navigateToBucket(bucketName, password);
                         }
                     };

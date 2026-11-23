@@ -1,31 +1,16 @@
 [package]
 name = "request_catcher"
-version = "0.4.20"
+version = "0.5.0"
 edition = "2021"
-
-[lib]
-name = "request_catcher"
-path = "src/lib.rs"
 
 [dependencies]
 actix-web = "4"
 serde = { version = "1.0", features = ["derive"] }
-actix-cors = "0.7"
-actix-files = "0.7"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-subtle = "2.6"
-dashmap = "6.2"
 
 [dev-dependencies]
-actix-rt = "2"
-reqwest = { version = "0.13", features = ["json"] }
 serde_json = "1.0"
-
-[[test]]
-name = "integration_tests"
-path = "tests/integration/integration_tests.rs"
 
 [profile.release]
 lto = "fat"

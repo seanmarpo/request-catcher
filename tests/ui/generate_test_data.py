@@ -1428,7 +1428,7 @@ class RequestCatcherTester:
         self.print_info(f"Password: {self.password}")
         print()
         self.print_success("Open the UI to view the captured requests:")
-        url = f"{self.base_url}/ui/bucket.html?name={self.bucket_name}&password={self.password}"
+        url = f"{self.base_url}/ui/bucket.html#name={self.bucket_name}&password={self.password}"
         print(f"  {Colors.CYAN}{url}{Colors.NC}")
         print()
         self.print_info(f"Generated {self.request_count} test requests demonstrating:")

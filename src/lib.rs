@@ -1,82 +1,54 @@
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
-use dashmap::DashMap;
+use actix_web::error::{ErrorBadRequest, ErrorConflict, ErrorNotFound, ErrorUnauthorized};
+use actix_web::http::header::{self, HeaderName};
+use actix_web::{web, HttpRequest, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use subtle::ConstantTimeEq;
-use tracing::{error, info, instrument, warn};
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{info, warn};
 
-// Constants
 const PASSWORD_HEADER: &str = "X-Bucket-Password";
 const MAX_REQUESTS_PER_BUCKET: usize = 1000;
 const DEFAULT_PAGE_SIZE: usize = 50;
 const MAX_PAGE_SIZE: usize = 500;
+const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
-// Reserved bucket names that cannot be used (conflicts with routes)
+// First path segments that are routes, so they can't be bucket names.
 const RESERVED_BUCKET_NAMES: &[&str] = &["api", "ui"];
 
-#[derive(Serialize, Deserialize, Clone)]
+const INDEX_HTML: &str = include_str!("../static/index.html");
+const BUCKET_HTML: &str = include_str!("../static/bucket.html");
+
+#[derive(Serialize, Clone)]
 pub struct RequestData {
+    /// Per-bucket sequence number, unique for the life of the bucket.
+    pub id: u64,
     pub path: String,
     pub method: String,
-    pub query_params: HashMap<String, String>,
-    pub headers: HashMap<String, String>,
+    /// Raw query string exactly as received (without the leading `?`).
+    pub query: String,
+    /// Headers as (name, value) pairs; a repeated header appears once per value,
+    /// in received order.
+    pub headers: Vec<(String, String)>,
     pub body: String,
+    pub remote_addr: String,
+    /// Milliseconds since the Unix epoch.
     pub timestamp: i64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
 pub struct Bucket {
-    pub password: String,
-    pub requests: Vec<RequestData>,
+    password: String,
+    requests: VecDeque<RequestData>,
+    next_id: u64,
 }
 
+#[derive(Default)]
 pub struct AppState {
-    pub buckets: DashMap<String, Bucket>,
-}
-
-// Helper function to extract bucket name from path
-fn extract_bucket_name(path: &str) -> Option<&str> {
-    path.trim_start_matches('/')
-        .split('/')
-        .next()
-        .filter(|name| !name.is_empty())
-}
-
-// Helper function to extract and validate password from request
-fn get_password_from_header(req: &HttpRequest) -> Result<&str, HttpResponse> {
-    match req.headers().get(PASSWORD_HEADER) {
-        Some(p) => Ok(p.to_str().unwrap_or("")),
-        None => {
-            warn!("Password header missing");
-            Err(HttpResponse::Unauthorized().body("Password required"))
-        }
-    }
-}
-
-// Helper function to verify password against bucket
-fn verify_bucket_password(bucket: &Bucket, password: &str) -> bool {
-    bucket.password.as_bytes().ct_eq(password.as_bytes()).into()
-}
-
-// Helper function to parse query parameters
-fn parse_query_params(query_string: &str) -> HashMap<String, String> {
-    if query_string.is_empty() {
-        return HashMap::new();
-    }
-
-    query_string
-        .split('&')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            match (parts.next(), parts.next()) {
-                (Some(key), Some(value)) if !key.is_empty() => {
-                    Some((key.to_string(), value.to_string()))
-                }
-                (Some(key), None) if !key.is_empty() => Some((key.to_string(), String::new())),
-                _ => None,
-            }
-        })
-        .collect()
+    pub buckets: Mutex<HashMap<String, Bucket>>,
+    /// Header to read the client IP from (e.g. `Fly-Client-IP` behind Fly's
+    /// proxy). When unset or absent, the TCP peer address is used.
+    pub client_ip_header: Option<HeaderName>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -99,260 +71,239 @@ pub struct PaginatedResponse {
     pub total_pages: usize,
 }
 
-// Helper function to check if bucket name is reserved
-fn is_reserved_bucket_name(name: &str) -> bool {
-    RESERVED_BUCKET_NAMES.contains(&name)
+/// Registers every route. Shared by `main` and the integration tests so both
+/// exercise the same routing.
+pub fn routes(cfg: &mut web::ServiceConfig) {
+    cfg.app_data(web::PayloadConfig::new(MAX_PAYLOAD_SIZE))
+        .service(
+            web::scope("/api")
+                .route("/buckets", web::get().to(list_buckets))
+                .route("/version", web::get().to(get_version))
+                .route("/create/{bucket_name}", web::post().to(create_bucket))
+                .route(
+                    "/requests/{bucket_name}",
+                    web::get().to(get_bucket_requests),
+                )
+                .route(
+                    "/clear/{bucket_name}",
+                    web::post().to(clear_bucket_requests),
+                )
+                .route("/delete/{bucket_name}", web::delete().to(delete_bucket)),
+        )
+        .route("/", web::get().to(|| redirect("/ui/")))
+        .route("/ui", web::get().to(|| redirect("/ui/")))
+        .route("/ui/", web::get().to(|| html(INDEX_HTML)))
+        .route("/ui/index.html", web::get().to(|| html(INDEX_HTML)))
+        .route("/ui/bucket.html", web::get().to(|| html(BUCKET_HTML)))
+        .default_service(web::to(capture_request));
 }
 
-// Helper function to validate bucket name
-fn validate_bucket_name(name: &str) -> Result<(), &'static str> {
-    // Check if empty
-    if name.is_empty() {
-        return Err("Bucket name cannot be empty");
-    }
+async fn redirect(location: &'static str) -> HttpResponse {
+    HttpResponse::Found()
+        .insert_header((header::LOCATION, location))
+        .finish()
+}
 
-    // Check if reserved
-    if is_reserved_bucket_name(name) {
+async fn html(body: &'static str) -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(body)
+}
+
+fn validate_bucket_name(name: &str) -> Result<(), &'static str> {
+    if RESERVED_BUCKET_NAMES.contains(&name) {
         return Err("Bucket name is reserved and cannot be used. Reserved names: api, ui");
     }
-
-    // Check length (reasonable limits)
-    if name.len() > 100 {
-        return Err("Bucket name is too long (max 100 characters)");
+    if name.is_empty() || name.len() > 100 {
+        return Err("Bucket name must be between 1 and 100 characters");
     }
-
-    // Check for valid characters (alphanumeric, hyphens, underscores)
+    // ASCII only: captures match on the raw (percent-encoded) request path,
+    // so non-ASCII names could be created but never receive requests.
     if !name
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        .bytes()
+        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
     {
-        return Err(
-            "Bucket name can only contain alphanumeric characters, hyphens, and underscores",
-        );
+        return Err("Bucket name can only contain ASCII letters, digits, hyphens, and underscores");
     }
-
-    // Check that it doesn't start or end with hyphen/underscore
-    if name.starts_with('-') || name.starts_with('_') || name.ends_with('-') || name.ends_with('_')
-    {
+    if name.starts_with(['-', '_']) || name.ends_with(['-', '_']) {
         return Err("Bucket name cannot start or end with hyphen or underscore");
     }
-
     Ok(())
 }
 
-#[instrument(skip(app_state, payload), fields(bucket_name = %path.as_str()))]
+/// Looks up a bucket and checks the password header against it.
+fn authorize<'a>(
+    buckets: &'a mut HashMap<String, Bucket>,
+    name: &str,
+    req: &HttpRequest,
+) -> Result<&'a mut Bucket> {
+    let password = req
+        .headers()
+        .get(PASSWORD_HEADER)
+        .ok_or_else(|| ErrorUnauthorized("Password required"))?;
+    let bucket = buckets
+        .get_mut(name)
+        .ok_or_else(|| ErrorNotFound("Bucket not found"))?;
+    if bucket.password.as_bytes() != password.as_bytes() {
+        warn!(bucket = name, "Invalid password");
+        return Err(ErrorUnauthorized("Invalid password"));
+    }
+    Ok(bucket)
+}
+
+fn client_ip(req: &HttpRequest, header: Option<&HeaderName>) -> String {
+    header
+        .and_then(|h| req.headers().get(h))
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| req.peer_addr().map(|addr| addr.ip().to_string()))
+        .unwrap_or_default()
+}
+
 pub async fn create_bucket(
     path: web::Path<String>,
     payload: web::Json<CreateBucketPayload>,
-    app_state: web::Data<AppState>,
-) -> impl Responder {
-    let bucket_name = path.as_ref();
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let name = path.into_inner();
     let password = payload.into_inner().password;
 
     if password.is_empty() {
-        warn!("Attempted to create bucket with empty password");
-        return HttpResponse::BadRequest().body("Password cannot be empty");
+        return Err(ErrorBadRequest("Password cannot be empty"));
     }
+    validate_bucket_name(&name).map_err(ErrorBadRequest)?;
 
-    // Validate bucket name
-    if let Err(error_msg) = validate_bucket_name(bucket_name) {
-        warn!(
-            bucket_name = %bucket_name,
-            error = %error_msg,
-            "Attempted to create bucket with invalid name"
-        );
-        return HttpResponse::BadRequest().body(error_msg);
+    match state.buckets.lock().unwrap().entry(name) {
+        Entry::Occupied(_) => Err(ErrorConflict("Bucket already exists")),
+        Entry::Vacant(entry) => {
+            info!(bucket = entry.key(), "Created bucket");
+            entry.insert(Bucket {
+                password,
+                requests: VecDeque::new(),
+                next_id: 1,
+            });
+            Ok(HttpResponse::Ok().body("Bucket created"))
+        }
     }
-
-    if app_state.buckets.contains_key(bucket_name) {
-        warn!("Attempted to create a bucket that already exists");
-        return HttpResponse::Conflict().body("Bucket already exists");
-    }
-
-    let new_bucket = Bucket {
-        password,
-        requests: Vec::new(),
-    };
-    app_state
-        .buckets
-        .insert(bucket_name.to_string(), new_bucket);
-
-    info!("Successfully created new bucket");
-    HttpResponse::Ok().body("Bucket created")
 }
 
-#[instrument(skip(req, body, app_state), fields(path = %req.path()))]
 pub async fn capture_request(
     req: HttpRequest,
     body: web::Bytes,
-    app_state: web::Data<AppState>,
-) -> impl Responder {
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
     let path = req.path();
-    let bucket_name = match extract_bucket_name(path) {
-        Some(name) => name,
-        None => {
-            warn!("Request with invalid bucket path");
-            return HttpResponse::BadRequest().body("Invalid bucket path.");
-        }
-    };
-    tracing::Span::current().record("bucket_name", &bucket_name);
+    let name = path
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    if name.is_empty() {
+        return Err(ErrorBadRequest("Invalid bucket path."));
+    }
 
-    if let Some(mut bucket_ref) = app_state.buckets.get_mut(bucket_name) {
-        let method = req.method().as_str();
-        let query_params = parse_query_params(req.query_string());
-        let headers: HashMap<String, String> = req
+    let remote_addr = client_ip(&req, state.client_ip_header.as_ref());
+    let mut buckets = state.buckets.lock().unwrap();
+    let Some(bucket) = buckets.get_mut(name) else {
+        return Err(ErrorNotFound("Bucket not found"));
+    };
+
+    info!(bucket = name, method = %req.method(), path, remote_addr, "Captured request");
+
+    let request = RequestData {
+        id: bucket.next_id,
+        path: path.to_owned(),
+        method: req.method().to_string(),
+        query: req.query_string().to_owned(),
+        headers: req
             .headers()
             .iter()
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-        let body = String::from_utf8_lossy(&body).into_owned();
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                )
+            })
+            .collect(),
+        body: String::from_utf8_lossy(&body).into_owned(),
+        remote_addr,
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64,
+    };
 
-        let request_data = RequestData {
-            path: path.to_string(),
-            method: method.to_string(),
-            query_params,
-            headers,
-            body,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64,
-        };
-
-        info!(method = %method, "Captured request");
-
-        // Limit the number of requests per bucket
-        if bucket_ref.requests.len() >= MAX_REQUESTS_PER_BUCKET {
-            bucket_ref.requests.remove(0); // Remove oldest request
-        }
-
-        bucket_ref.requests.push(request_data);
-        HttpResponse::Ok().body("Request captured")
-    } else {
-        warn!("Request for non-existent bucket");
-        HttpResponse::NotFound().body("Bucket not found")
+    bucket.next_id += 1;
+    if bucket.requests.len() >= MAX_REQUESTS_PER_BUCKET {
+        bucket.requests.pop_front();
     }
+    bucket.requests.push_back(request);
+    Ok(HttpResponse::Ok().body("Request captured"))
 }
 
-#[instrument(skip(req, app_state, query), fields(bucket_name = req.match_info().get("bucket_name").unwrap_or("unknown")))]
+/// Returns a page of captured requests, newest first.
 pub async fn get_bucket_requests(
     req: HttpRequest,
+    path: web::Path<String>,
     query: web::Query<PaginationParams>,
-    app_state: web::Data<AppState>,
-) -> impl Responder {
-    let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
-    let password = match get_password_from_header(&req) {
-        Ok(pwd) => pwd,
-        Err(response) => return response,
-    };
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let mut buckets = state.buckets.lock().unwrap();
+    let bucket = authorize(&mut buckets, &path, &req)?;
 
-    match app_state.buckets.get(bucket_name) {
-        Some(bucket_ref) => {
-            if !verify_bucket_password(&bucket_ref, password) {
-                warn!("Invalid password provided for bucket");
-                return HttpResponse::Unauthorized().body("Invalid password");
-            }
+    let total = bucket.requests.len();
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query
+        .page_size
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE);
+    let requests = bucket
+        .requests
+        .iter()
+        .rev()
+        .skip((page - 1).saturating_mul(page_size))
+        .take(page_size)
+        .cloned()
+        .collect();
 
-            let total = bucket_ref.requests.len();
-            let page = query.page.unwrap_or(1).max(1);
-            let page_size = query
-                .page_size
-                .unwrap_or(DEFAULT_PAGE_SIZE)
-                .min(MAX_PAGE_SIZE)
-                .max(1);
-            let total_pages = (total + page_size - 1) / page_size;
-
-            let start = (page - 1) * page_size;
-            let end = (start + page_size).min(total);
-
-            let requests = if start < total {
-                bucket_ref.requests[start..end].to_vec()
-            } else {
-                Vec::new()
-            };
-
-            let response = PaginatedResponse {
-                requests,
-                total,
-                page,
-                page_size,
-                total_pages,
-            };
-
-            HttpResponse::Ok().json(response)
-        }
-        None => {
-            warn!("Request for non-existent bucket");
-            HttpResponse::NotFound().body("Bucket not found")
-        }
-    }
+    Ok(HttpResponse::Ok().json(PaginatedResponse {
+        requests,
+        total,
+        page,
+        page_size,
+        total_pages: total.div_ceil(page_size),
+    }))
 }
 
-#[instrument(skip(req, app_state), fields(bucket_name = %req.match_info().get("bucket_name").unwrap_or("unknown")))]
-pub async fn delete_bucket(req: HttpRequest, app_state: web::Data<AppState>) -> impl Responder {
-    let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
-    let password = match get_password_from_header(&req) {
-        Ok(pwd) => pwd,
-        Err(response) => return response,
-    };
-
-    // First check authentication
-    if let Some((_, bucket)) = app_state.buckets.remove(bucket_name) {
-        if verify_bucket_password(&bucket, password) {
-            info!("Successfully deleted bucket");
-            HttpResponse::Ok().body("Bucket deleted")
-        } else {
-            // Re-insert the bucket since password was wrong
-            app_state.buckets.insert(bucket_name.to_string(), bucket);
-            error!("Invalid password provided for deletion");
-            HttpResponse::Unauthorized().body("Invalid password")
-        }
-    } else {
-        error!("Bucket not found for deletion");
-        HttpResponse::NotFound().body("Bucket not found")
-    }
-}
-
-#[instrument(skip(req, app_state), fields(bucket_name = %req.match_info().get("bucket_name").unwrap_or("unknown")))]
 pub async fn clear_bucket_requests(
     req: HttpRequest,
-    app_state: web::Data<AppState>,
-) -> impl Responder {
-    let bucket_name = req.match_info().get("bucket_name").unwrap_or_default();
-    let password = match get_password_from_header(&req) {
-        Ok(pwd) => pwd,
-        Err(response) => return response,
-    };
-
-    match app_state.buckets.get_mut(bucket_name) {
-        Some(mut bucket_ref) => {
-            if verify_bucket_password(&bucket_ref, password) {
-                bucket_ref.requests.clear();
-                info!("Successfully cleared requests from bucket");
-                HttpResponse::Ok().body("Bucket requests cleared")
-            } else {
-                error!("Invalid password provided");
-                HttpResponse::Unauthorized().body("Invalid password")
-            }
-        }
-        None => {
-            error!("Bucket not found");
-            HttpResponse::NotFound().body("Bucket not found")
-        }
-    }
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let mut buckets = state.buckets.lock().unwrap();
+    authorize(&mut buckets, &path, &req)?.requests.clear();
+    info!(bucket = %path, "Cleared bucket");
+    Ok(HttpResponse::Ok().body("Bucket requests cleared"))
 }
 
-pub async fn list_buckets(app_state: web::Data<AppState>) -> impl Responder {
-    let names: Vec<String> = app_state
-        .buckets
-        .iter()
-        .map(|entry| entry.key().clone())
-        .collect();
-    info!(count = names.len(), "Served list of buckets");
+pub async fn delete_bucket(
+    req: HttpRequest,
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> Result<HttpResponse> {
+    let mut buckets = state.buckets.lock().unwrap();
+    authorize(&mut buckets, &path, &req)?;
+    buckets.remove(path.as_str());
+    info!(bucket = %path, "Deleted bucket");
+    Ok(HttpResponse::Ok().body("Bucket deleted"))
+}
+
+pub async fn list_buckets(state: web::Data<AppState>) -> HttpResponse {
+    let mut names: Vec<String> = state.buckets.lock().unwrap().keys().cloned().collect();
+    names.sort_unstable();
     HttpResponse::Ok().json(names)
 }
 
-pub async fn get_version() -> impl Responder {
-    HttpResponse::Ok().body(env!("CARGO_PKG_VERSION"))
+pub async fn get_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
-

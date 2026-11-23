@@ -12,6 +12,8 @@
 
 Bump every dependency in `Cargo.toml` to its latest compatible version, update `Cargo.lock`, and increment the app's patch version.
 
+`scripts/update-deps.sh` automates all of the steps below (and offers to commit, tag, and push at the end). Prefer running it; the steps are documented here for when a breaking upgrade needs manual fixes.
+
 ### Prerequisites
 
 `cargo-edit` must be available for `cargo upgrade`. Install it if it is missing:

@@ -6,7 +6,7 @@ You can interact with a demo instance of this application at:
 - [https://request-catcher.fly.dev/](https://request-catcher.fly.dev/)
 
 ## Features
-- Complete HTTP request capture including methods, headers, parameters, and body
+- Complete HTTP request capture including source IP, method, headers, raw query string, and body
 - User controlled, password protected buckets for capturing requests privately
 - Ability to view all existing buckets making it easy to return to your space
 - Ability to delete a bucket and/or clear all requests from a bucket
@@ -51,6 +51,7 @@ Environment variables:
 - `HOST` - Bind address (default: `0.0.0.0` in Docker, `127.0.0.1` otherwise)
 - `PORT` - Port to listen on (default: `9090`)
 - `RUST_LOG` - Log level (default: `info`, options: `error`, `warn`, `info`, `debug`, `trace`)
+- `CLIENT_IP_HEADER` - Header to read the client IP from when running behind a reverse proxy (e.g. `Fly-Client-IP` on Fly.io, `X-Real-IP` behind nginx). When unset, or when a request lacks the header, the TCP peer address is used. Only set this if your proxy always overwrites the header, otherwise clients can spoof their IP.
 
 Example with custom configuration:
 ```bash
@@ -98,8 +99,7 @@ cargo test -- --nocapture
 cargo run
 
 # In another terminal, generate test data
-cd tests/ui
-./generate_test_data.sh
+./tests/ui/generate_test_data.py
 
 # Open the provided URL in your browser to verify
 ```

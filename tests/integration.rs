@@ -1,14 +1,11 @@
 use actix_web::{test, web, App};
-use request_catcher::{
-    capture_request, clear_bucket_requests, create_bucket, delete_bucket, get_bucket_requests,
-    list_buckets, AppState, CreateBucketPayload,
-};
-use serde_json::json;
+use request_catcher::{routes, AppState, CreateBucketPayload};
+use serde_json::{json, Value};
 
 const PASSWORD_HEADER: &str = "X-Bucket-Password";
 const TEST_PASSWORD: &str = "test_password_123";
 
-/// Helper function to create a test app with initialized state
+/// Builds the app with the same routes `main` uses.
 fn create_test_app() -> App<
     impl actix_web::dev::ServiceFactory<
         actix_web::dev::ServiceRequest,
@@ -18,28 +15,20 @@ fn create_test_app() -> App<
         InitError = (),
     >,
 > {
-    let app_state = web::Data::new(AppState {
-        buckets: Default::default(),
-    });
-
     App::new()
-        .app_data(app_state.clone())
-        .app_data(web::PayloadConfig::new(10 * 1024 * 1024)) // 10MB
-        .service(
-            web::scope("/api")
-                .route("/buckets", web::get().to(list_buckets))
-                .route(
-                    "/clear/{bucket_name}",
-                    web::post().to(clear_bucket_requests),
-                )
-                .route("/delete/{bucket_name}", web::delete().to(delete_bucket))
-                .route("/create/{bucket_name}", web::post().to(create_bucket))
-                .route(
-                    "/requests/{bucket_name}",
-                    web::get().to(get_bucket_requests),
-                ),
-        )
-        .route("/{path:.*}", web::route().to(capture_request))
+        .app_data(web::Data::new(AppState::default()))
+        .configure(routes)
+}
+
+/// Returns every value of header `name` in a captured request.
+fn header_values<'a>(request: &'a Value, name: &str) -> Vec<&'a str> {
+    request["headers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|pair| pair[0] == name)
+        .map(|pair| pair[1].as_str().unwrap())
+        .collect()
 }
 
 #[actix_web::test]
@@ -216,8 +205,7 @@ async fn test_capture_get_request() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["method"], "GET");
     assert_eq!(requests[0]["path"], "/test-bucket/api/users");
-    assert_eq!(requests[0]["query_params"]["id"], "123");
-    assert_eq!(requests[0]["query_params"]["name"], "test");
+    assert_eq!(requests[0]["query"], "id=123&name=test");
 }
 
 #[actix_web::test]
@@ -531,8 +519,11 @@ async fn test_capture_request_with_custom_headers() {
     let requests = response["requests"].as_array().unwrap();
 
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0]["headers"]["x-custom-header"], "custom-value");
-    assert_eq!(requests[0]["headers"]["x-api-key"], "secret-key-123");
+    assert_eq!(
+        header_values(&requests[0], "x-custom-header"),
+        ["custom-value"]
+    );
+    assert_eq!(header_values(&requests[0], "x-api-key"), ["secret-key-123"]);
 }
 
 #[actix_web::test]
@@ -870,7 +861,7 @@ async fn test_concurrent_requests_to_same_bucket() {
     for i in 0..10 {
         let req = test::TestRequest::post()
             .uri(&format!("/test-bucket/api/concurrent/{}", i))
-            .set_json(&json!({"index": i}))
+            .set_json(json!({"index": i}))
             .to_request();
         test::call_service(&app, req).await;
     }
@@ -1179,12 +1170,9 @@ async fn test_max_requests_per_bucket_limit() {
     assert_eq!(response["total_pages"], 2);
     assert_eq!(response["requests"].as_array().unwrap().len(), 500);
 
-    // Verify the first request on page 1 (should be the 6th one sent, as first 5 were removed)
+    // Newest first: page 1 starts with the last request sent
     let requests_page1 = response["requests"].as_array().unwrap();
-    assert!(requests_page1[0]["path"]
-        .as_str()
-        .unwrap()
-        .contains("/resource/6"));
+    assert_eq!(requests_page1[0]["path"], "/test-bucket/api/resource/1005");
 
     // Get page 2 to verify the last request
     let req = test::TestRequest::get()
@@ -1197,9 +1185,237 @@ async fn test_max_requests_per_bucket_limit() {
 
     let requests_page2 = response["requests"].as_array().unwrap();
     assert_eq!(requests_page2.len(), 500);
-    // The last request should be the 1005th one sent
-    assert!(requests_page2[499]["path"]
-        .as_str()
+    // The oldest remaining request is the 6th sent (first 5 were evicted)
+    assert_eq!(requests_page2[499]["path"], "/test-bucket/api/resource/6");
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for the tests below
+// ---------------------------------------------------------------------------
+
+fn create_req(name: &str) -> test::TestRequest {
+    test::TestRequest::post()
+        .uri(&format!("/api/create/{name}"))
+        .set_json(&CreateBucketPayload {
+            password: TEST_PASSWORD.to_string(),
+        })
+}
+
+fn fetch_req(uri: &str) -> test::TestRequest {
+    test::TestRequest::get()
+        .uri(uri)
+        .insert_header((PASSWORD_HEADER, TEST_PASSWORD))
+}
+
+#[actix_web::test]
+async fn test_pagination_is_newest_first() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("pg").to_request())
+        .await
+        .status();
+    for i in 1..=25 {
+        let req = test::TestRequest::get()
+            .uri(&format!("/pg/{i}"))
+            .to_request();
+        test::call_service(&app, req).await;
+    }
+
+    let page1 = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/pg?page=1&page_size=10").to_request(),
+    )
+    .await;
+    let paths: Vec<&str> = page1["requests"]
+        .as_array()
         .unwrap()
-        .contains("/resource/1005"));
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths.first(), Some(&"/pg/25"));
+    assert_eq!(paths.last(), Some(&"/pg/16"));
+
+    let page3 = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/pg?page=3&page_size=10").to_request(),
+    )
+    .await;
+    assert_eq!(page3["requests"][4]["path"], "/pg/1");
+}
+
+#[actix_web::test]
+async fn test_huge_page_number_does_not_panic() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("pg").to_request())
+        .await
+        .status();
+    let uri = format!("/api/requests/pg?page={}&page_size=500", usize::MAX);
+    let resp =
+        test::call_and_read_body_json::<_, _, Value>(&app, fetch_req(&uri).to_request()).await;
+    assert_eq!(resp["requests"].as_array().unwrap().len(), 0);
+}
+
+#[actix_web::test]
+async fn test_request_ids_are_sequential_and_survive_clear() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("ids").to_request())
+        .await
+        .status();
+    for _ in 0..2 {
+        test::call_service(&app, test::TestRequest::get().uri("/ids").to_request()).await;
+    }
+    let req = test::TestRequest::post()
+        .uri("/api/clear/ids")
+        .insert_header((PASSWORD_HEADER, TEST_PASSWORD))
+        .to_request();
+    test::call_service(&app, req).await;
+    test::call_service(&app, test::TestRequest::get().uri("/ids").to_request()).await;
+
+    let resp = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/ids").to_request(),
+    )
+    .await;
+    assert_eq!(resp["requests"][0]["id"], 3);
+}
+
+#[actix_web::test]
+async fn test_non_ascii_bucket_name_rejected() {
+    let app = test::init_service(create_test_app()).await;
+    assert_eq!(
+        test::call_service(&app, create_req("caf%C3%A9").to_request())
+            .await
+            .status(),
+        400
+    );
+}
+
+#[actix_web::test]
+async fn test_repeated_headers_and_query_params_preserved() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("dup").to_request())
+        .await
+        .status();
+    let req = test::TestRequest::get()
+        .uri("/dup/x?a=1&a=2&b")
+        .append_header(("X-Test", "one"))
+        .append_header(("X-Test", "two"))
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let resp = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/dup").to_request(),
+    )
+    .await;
+    let captured = &resp["requests"][0];
+    assert_eq!(captured["query"], "a=1&a=2&b");
+    assert_eq!(header_values(captured, "x-test"), ["one", "two"]);
+}
+
+#[actix_web::test]
+async fn test_remote_addr_uses_peer_address_by_default() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("ip").to_request())
+        .await
+        .status();
+    let req = test::TestRequest::get()
+        .uri("/ip")
+        .peer_addr("203.0.113.7:4444".parse().unwrap())
+        .insert_header(("Fly-Client-IP", "198.51.100.1"))
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let resp = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/ip").to_request(),
+    )
+    .await;
+    // Header is ignored unless CLIENT_IP_HEADER is configured
+    assert_eq!(resp["requests"][0]["remote_addr"], "203.0.113.7");
+}
+
+#[actix_web::test]
+async fn test_remote_addr_uses_configured_header() {
+    let state = AppState {
+        client_ip_header: Some("fly-client-ip".parse().unwrap()),
+        ..Default::default()
+    };
+    let app =
+        test::init_service(App::new().app_data(web::Data::new(state)).configure(routes)).await;
+    test::call_service(&app, create_req("ip").to_request())
+        .await
+        .status();
+
+    // Header present: use it
+    let req = test::TestRequest::get()
+        .uri("/ip")
+        .peer_addr("203.0.113.7:4444".parse().unwrap())
+        .insert_header(("Fly-Client-IP", "198.51.100.1"))
+        .to_request();
+    test::call_service(&app, req).await;
+    // Header absent: fall back to peer address
+    let req = test::TestRequest::get()
+        .uri("/ip")
+        .peer_addr("203.0.113.7:4444".parse().unwrap())
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let resp = test::call_and_read_body_json::<_, _, Value>(
+        &app,
+        fetch_req("/api/requests/ip").to_request(),
+    )
+    .await;
+    assert_eq!(resp["requests"][1]["remote_addr"], "198.51.100.1");
+    assert_eq!(resp["requests"][0]["remote_addr"], "203.0.113.7");
+}
+
+#[actix_web::test]
+async fn test_wrong_password_delete_leaves_bucket_capturing() {
+    let app = test::init_service(create_test_app()).await;
+    test::call_service(&app, create_req("keep").to_request())
+        .await
+        .status();
+    let req = test::TestRequest::delete()
+        .uri("/api/delete/keep")
+        .insert_header((PASSWORD_HEADER, "wrong"))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 401);
+
+    let req = test::TestRequest::get().uri("/keep").to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), 200);
+    // Password is unchanged
+    assert_eq!(
+        test::call_and_read_body_json::<_, _, Value>(
+            &app,
+            fetch_req("/api/requests/keep").to_request()
+        )
+        .await["total"],
+        1
+    );
+}
+
+#[actix_web::test]
+async fn test_ui_is_embedded() {
+    let app = test::init_service(create_test_app()).await;
+    for uri in ["/ui/", "/ui/index.html", "/ui/bucket.html"] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert_eq!(resp.status(), 200, "{uri}");
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+    }
+    for uri in ["/", "/ui"] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert_eq!(resp.status(), 302, "{uri}");
+        assert_eq!(resp.headers().get("location").unwrap(), "/ui/");
+    }
+}
+
+#[actix_web::test]
+async fn test_version_endpoint() {
+    let app = test::init_service(create_test_app()).await;
+    let req = test::TestRequest::get().uri("/api/version").to_request();
+    let body = test::call_and_read_body(&app, req).await;
+    assert_eq!(body, env!("CARGO_PKG_VERSION"));
 }

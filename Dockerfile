@@ -38,35 +38,25 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN export RUST_TARGET=$(cat /tmp/rust_target) && \
     cargo chef cook --release --target $RUST_TARGET --recipe-path recipe.json
 
-# Copy source and build application
+# Copy source and build application (static/ is embedded into the binary)
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY static ./static
 
-# Build static binary with musl for Alpine compatibility
+# Build a fully static musl binary
 # Note: Binary is already stripped via strip = true in Cargo.toml
 RUN export RUST_TARGET=$(cat /tmp/rust_target) && \
     cargo build --release --target $RUST_TARGET && \
     cp target/$RUST_TARGET/release/request_catcher /tmp/request_catcher
 
-# Runtime stage - minimal Alpine image
-FROM alpine:latest
+# Runtime stage - the static binary needs nothing else (UI is embedded,
+# and the app makes no outbound connections)
+FROM scratch
 
-# Install CA certificates for HTTPS
-RUN apk add --no-cache ca-certificates && \
-    addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
+COPY --from=builder /tmp/request_catcher /request_catcher
 
-WORKDIR /app
-
-# Copy binary and static files
-COPY --from=builder /tmp/request_catcher /usr/local/bin/request_catcher
-COPY --from=builder /app/static /app/static
-
-# Set ownership
-RUN chown -R appuser:appuser /app
-
-USER appuser
+# Run as an unprivileged user
+USER 1000:1000
 
 # Expose the default port
 EXPOSE 9090
@@ -76,4 +66,4 @@ ENV HOST=0.0.0.0
 ENV PORT=9090
 ENV RUST_LOG=info
 
-ENTRYPOINT ["/usr/local/bin/request_catcher"]
+ENTRYPOINT ["/request_catcher"]
